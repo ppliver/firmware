@@ -58,8 +58,11 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: firmware-${{matrix.platform}}-${{matrix.release}}
-          path: |
-            output/images/openipc.${{matrix.platform}}-nor-${{matrix.release}}.tgz
-            output/images/openipc.${{matrix.platform}}-nand-${{matrix.release}}.tgz
-            output/images/openipc.${{matrix.platform}}-nand-${{matrix.release}}.tgz.md5sum
-          if-no-files-found: ignore
+          # 128MB SPI-NAND board, so only the Makefile's NAND branch runs and it
+          # emits exactly one file. Two paths listed here were phantoms and only
+          # cost a "No files were found" warning per run: the -nor- tgz (no NOR
+          # branch) and the tgz's own .md5sum (PREPARE_REPACK deletes
+          # images/*.md5sum right before taring; the per-image checksums for
+          # uImage/rootfs.ubi are *inside* the tgz).
+          path: output/images/openipc.${{matrix.platform}}-nand-${{matrix.release}}.tgz
+          if-no-files-found: error

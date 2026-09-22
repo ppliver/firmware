@@ -60,6 +60,13 @@ BR2_PACKAGE_MOSQUITTO=y
 # modules stay unloaded. wpa_supplicant talks nl80211, so it works against the
 # vendor cfg80211 regardless of which .ko provides it.
 BR2_PACKAGE_WPA_SUPPLICANT=y
+# wpa_cli is a SEPARATE option (buildroot installs it to /usr/sbin/wpa_cli only
+# when this is set) and bringup_wifi.sh polls association with
+# `wpa_cli -iwlan0 status | grep -q COMPLETED`, so without it the bring-up can
+# never confirm the link and the script just burns its timeout. Nearly every
+# upstream WiFi defconfig enables this alongside WPA_SUPPLICANT. NL80211 (and
+# its libnl) is default-y, so no explicit entry is needed for the driver.
+BR2_PACKAGE_WPA_SUPPLICANT_CLI=y
 # mbedtls-openipc is NOT optional here: libwebsockets-openipc's .mk does
 # `if BR2_PACKAGE_MBEDTLS_OPENIPC ... -DLWS_WITH_MBEDTLS=ON else ...=OFF`, and
 # with mbedTLS off its CMake falls back to auto-detecting OpenSSL -> configure
