@@ -18,10 +18,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          
+    include:
+      
+      # SAZ1051 [Hi3516CV610 + OS05L10 + WS73] — 128MB SPI-NAND
+      - {"platform": "saz1051", "release": "ultimate"}
 
-          # Hisilicon [HI3516CV300]
+      # Hisilicon [HI3516CV300]
           #- {"platform": "hi3516cv300", "release": "mini"}
            - {"platform": "hi3516cv300", "release": "lite"}
           #- {"platform": "hi3516cv300", "release": "ultimate"}

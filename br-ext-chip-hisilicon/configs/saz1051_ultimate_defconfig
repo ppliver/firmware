@@ -1,0 +1,99 @@
+# OpenIPC — SAZ1051 (Hi3516CV610 + OS05L10 + WS73) 128MB SPI-NAND board
+#
+# Forked from hi3516cv6xx_ultimate_defconfig. Differences for this board:
+#   * SOC_MODEL = saz1051  (drives artifact name openipc.saz1051-nand-ultimate.tgz
+#     and the kernel config path board/hi3516cv6xx/saz1051.generic.config)
+#   * NAND rootfs: UBIFS + UBI (DS35Q1GA, PEB 128K / LEB 0x1f000 / subpage 2048)
+#     instead of NOR squashfs. ubinize volume name = ubifs (bootargs root=ubi0:ubifs).
+#   * Drop hisilicon-opensdk (we ship prebuilt open_*.ko via saz1051-vendor to
+#     preserve the CONFIG_PM=n ABI); add saz1051-vendor for the board blobs.
+#   * Add wpa_supplicant for the WS73 USB WiFi bring-up.
+#   * Drop wireguard (kernel lacks it; saves space on the 128MB board).
+BR2_OPENIPC_SOC_VENDOR="hisilicon"
+BR2_OPENIPC_SOC_MODEL="saz1051"
+BR2_OPENIPC_SOC_FAMILY="hi3516cv6xx"
+# One cv6xx image serves dies that report distinct ids (hi3516cv610,
+# hi3516cv608) via fw_printenv/ipcinfo.
+BR2_OPENIPC_SOC_ALIASES="hi3516cv610 hi3516cv608"
+BR2_OPENIPC_VARIANT="ultimate"
+BR2_OPENIPC_FLASH_SIZE="16"
+
+# Architecture
+BR2_arm=y
+BR2_cortex_a7=y
+BR2_ARM_EABI=y
+BR2_ARM_FPU_NEON_VFPV4=y
+BR2_ARM_INSTRUCTIONS_THUMB2=y
+
+# Toolchain  (musl / gcc13 — matches the proven new5 userspace ABI)
+BR2_TOOLCHAIN_EXTERNAL=y
+BR2_TOOLCHAIN_EXTERNAL_DOWNLOAD=y
+BR2_TOOLCHAIN_EXTERNAL_URL="https://github.com/openipc/firmware/releases/download/$(OPENIPC_TOOLCHAIN).tgz"
+BR2_TOOLCHAIN_EXTERNAL_CUSTOM_PREFIX="arm-openipc-linux-musleabi"
+BR2_TOOLCHAIN_EXTERNAL_HEADERS_5_10=y
+BR2_TOOLCHAIN_EXTERNAL_CUSTOM_MUSL=y
+BR2_GCC_VERSION_13_X=y
+BR2_TOOLCHAIN_EXTERNAL_CXX=y
+
+# Kernel — in-tree hi3516cv610 defconfig (NAND-capable) + saz1051 fragment
+BR2_LINUX_KERNEL=y
+BR2_LINUX_KERNEL_CUSTOM_TARBALL=y
+BR2_LINUX_KERNEL_CUSTOM_TARBALL_LOCATION="https://github.com/openipc/linux/archive/$(OPENIPC_KERNEL).tar.gz"
+BR2_LINUX_KERNEL_USE_CUSTOM_CONFIG=y
+BR2_LINUX_KERNEL_CUSTOM_CONFIG_FILE="$(EXTERNAL_VENDOR)/board/$(OPENIPC_SOC_FAMILY)/$(BR2_OPENIPC_SOC_MODEL).generic.config"
+BR2_ROOTFS_POST_IMAGE_SCRIPT="$(EXTERNAL_VENDOR)/board/$(OPENIPC_SOC_FAMILY)/post-image.sh"
+BR2_LINUX_KERNEL_ZIMAGE=y
+BR2_LINUX_KERNEL_XZ=y
+BR2_LINUX_KERNEL_UIMAGE_LOADADDR="0x40018000"
+BR2_LINUX_KERNEL_DTS_SUPPORT=y
+# BR2_LINUX_KERNEL_DTB_IS_SELF_BUILT is not set
+BR2_LINUX_KERNEL_INTREE_DTS_NAME="hi3516cv610-demb"
+
+# Filesystem — 128MB SPI-NAND (DS35Q1GA)
+BR2_PACKAGE_BUSYBOX_CONFIG="$(BR2_EXTERNAL)/package/busybox/busybox.config"
+BR2_PACKAGE_EXFATPROGS=y
+BR2_PACKAGE_UBOOT_TOOLS=y
+BR2_PACKAGE_IPTABLES=y
+BR2_PACKAGE_MOSQUITTO=y
+# Wireless: WS73 USB WiFi. Vendor cfg80211_v20/mac80211 ko are insmoded by
+# absolute path by bringup_wifi.sh; the in-tree CONFIG_CFG80211/MAC80211=m
+# modules stay unloaded. wpa_supplicant talks nl80211, so it works against the
+# vendor cfg80211 regardless of which .ko provides it.
+BR2_PACKAGE_WPA_SUPPLICANT=y
+
+# NAND rootfs (UBIFS + UBI) — geometry for DS35Q1GA
+# mkfs.ubifs -m 2048 -e 126976 -c 760 -x zlib ; ubinize -p 131072 -m 2048 -s 2048
+# volume name must be "ubifs" (bootargs: root=ubi0:ubifs)
+BR2_TARGET_ROOTFS_UBIFS=y
+BR2_TARGET_ROOTFS_UBIFS_LEBSIZE=0x1f000
+BR2_TARGET_ROOTFS_UBIFS_MINIOSIZE=0x800
+BR2_TARGET_ROOTFS_UBIFS_MAXLEBCNT=760
+BR2_TARGET_ROOTFS_UBIFS_COMPRESSION_ZLIB=y
+# BR2_TARGET_ROOTFS_UBIFS_COMPRESSION_LZO is not set
+BR2_TARGET_ROOTFS_UBI=y
+BR2_TARGET_ROOTFS_UBI_PEBSIZE=0x20000
+BR2_TARGET_ROOTFS_UBI_SUBSIZE=0x800
+BR2_TARGET_ROOTFS_UBI_CFG="$(EXTERNAL_VENDOR)/board/$(OPENIPC_SOC_FAMILY)/ubinize.cfg"
+
+# Packages
+BR2_PACKAGE_DROPBEAR_OPENIPC=y
+BR2_PACKAGE_HISILICON_OSDRV_HI3516CV6XX=y
+BR2_PACKAGE_IPCTOOL=y
+BR2_PACKAGE_LIBEVENT_OPENIPC=y
+BR2_PACKAGE_LIBOGG_OPENIPC=y
+BR2_PACKAGE_LIBWEBSOCKETS_OPENIPC=y
+BR2_PACKAGE_LIBCURL_OPENIPC_CURL=y
+# BR2_PACKAGE_LIBCURL_OPENIPC_PROXY_SUPPORT is not set
+# BR2_PACKAGE_LIBCURL_OPENIPC_COOKIES_SUPPORT is not set
+# BR2_PACKAGE_LIBCURL_OPENIPC_EXTRA_PROTOCOLS_FEATURES is not set
+BR2_PACKAGE_LAME_OPENIPC=y
+BR2_PACKAGE_OPUS_OPENIPC=y
+BR2_PACKAGE_OPUS_OPENIPC_FIXED_POINT=y
+BR2_PACKAGE_OPUS_OPENIPC_HISI_SHIM=y
+# protobuf-c is dynamically loaded by the cv6xx majestic binary
+BR2_PACKAGE_PROTOBUF_C=y
+BR2_PACKAGE_MAJESTIC=y
+BR2_PACKAGE_MAJESTIC_FONTS=y
+BR2_PACKAGE_MAJESTIC_WEBUI=y
+BR2_PACKAGE_YAML_CLI=y
+BR2_PACKAGE_SAZ1051_VENDOR=y

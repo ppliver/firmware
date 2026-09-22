@@ -82,7 +82,7 @@ ifeq ($(BR2_OPENIPC_SOC_VENDOR),"rockchip")
 else ifeq ($(BR2_OPENIPC_SOC_VENDOR),"sigmastar")
 	@$(call PREPARE_REPACK,,,rootfs.ubi,16384,nand)
 else
-	@$(call PREPARE_REPACK,uImage,4096,rootfs.ubi,16384,nand)
+	@$(call PREPARE_REPACK,uImage,8192,rootfs.ubi,65536,nand)
 endif
 endif
 ifeq ($(BR2_TARGET_ROOTFS_INITRAMFS),y)

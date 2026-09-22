@@ -21,3 +21,15 @@ LIST="${BR2_EXTERNAL_GENERAL_PATH}/scripts/excludes/${OPENIPC_SOC_MODEL}_${OPENI
 if [ -f ${LIST} ]; then
 	xargs -a ${LIST} -I % rm -f ${TARGET_DIR}%
 fi
+
+# SAZ1051: replace the stock /init (which requires OVERLAY_FS, absent in our
+# kernel -> it would `exit 1` and panic) with our self-contained board init.
+# This runs AFTER the rootfs overlay is applied, so it wins over
+# general/overlay/init. oipc_init.sh is installed to /opt/oipc by the
+# saz1051-vendor package; we copy it to /init here.
+if grep -q '^BR2_OPENIPC_SOC_MODEL="saz1051"' "${BR2_CONFIG}"; then
+	VENDOR_INIT="${BR2_EXTERNAL_GENERAL_PATH}/../vendor/saz1051/scripts/oipc_init.sh"
+	if [ -f "${VENDOR_INIT}" ]; then
+		install -m 0755 "${VENDOR_INIT}" "${TARGET_DIR}/init"
+	fi
+fi
