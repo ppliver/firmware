@@ -1,0 +1,8 @@
+Proprietary vendor firmware blobs for the SAZ1051 camera board
+(Hi3516CV610 + OS05L10 sensor + WS73/Hi3873V100 USB WiFi).
+
+The files under vendor/saz1051/ (MPP kernel modules, OS05L10 sensor
+library/ini, WS73 WiFi driver + RF firmware, board init and majestic
+config) are closed vendor artifacts redistributed here for build
+reproducibility. They are not covered by the OpenIPC license and may
+be subject to separate vendor terms.

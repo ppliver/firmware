@@ -165,6 +165,13 @@ else
 endif
 else
 ifeq ($(BR2_OPENIPC_SOC_FAMILY),"hi3516cv6xx")
+# SAZ1051 (cv610 + 128 MB SPI-NAND) uses the UBI rootfs branch: U-Boot on this
+# board boots a FIT, so the repack pairs uImage (the FIT built by post-image.sh)
+# with rootfs.ubi. Caps are generous -- the image is ~17 MB on this part.
+ifeq ($(BR2_TARGET_ROOTFS_UBI),y)
+	@$(call CHECK_SIZE,uImage,8192)
+	@$(call PREPARE_REPACK,uImage,8192,rootfs.ubi,65536,nand)
+else
 # The cv610 u-boot boots from a fixed table: 2048K(kernel) read whole by
 # `sf read ${kernaddr} ${kernsize}`, then 5120K(rootfs) at a fixed offset. The
 # combined firmware.bin hides both bounds, so on the 8 MiB part measure the two
@@ -176,6 +183,7 @@ ifeq ($(BR2_OPENIPC_FLASH_SIZE),"8")
 	@$(call CHECK_SIZE,rootfs.squashfs,5120)
 endif
 	@$(call PREPARE_REPACK,firmware.bin,$(shell expr $(subst ",,$(BR2_OPENIPC_FLASH_SIZE)) \* 1024),,,nor)
+endif
 else ifeq ($(BR2_OPENIPC_SOC_FAMILY),"hi3519dv500")
 	@$(call PREPARE_REPACK,firmware.bin,$(shell expr $(subst ",,$(BR2_OPENIPC_FLASH_SIZE)) \* 1024),,,nor)
 else ifneq ($(wildcard $(TARGET)/images/firmware.bin),)
