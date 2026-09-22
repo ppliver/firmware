@@ -157,14 +157,30 @@ if [ -f "${STRIPPER}" ]; then
 	rm -f "${STRIP_TMP}" "${STRIP_ERR}"
 fi
 
-# SAZ1051: replace the stock /init (which requires OVERLAY_FS, absent in our
-# kernel -> it would `exit 1` and panic) with our self-contained board init.
-# This runs AFTER the rootfs overlay is applied, so it wins over
-# general/overlay/init. oipc_init.sh is installed to /opt/oipc by the
-# saz1051-vendor package; we copy it to /init here.
+# SAZ1051 board fixes -- applied here, after the rootfs overlay and after every
+# package, so these copies deterministically win.
 if grep -q '^BR2_OPENIPC_SOC_MODEL="saz1051"' "${BR2_CONFIG}"; then
-	VENDOR_INIT="${BR2_EXTERNAL_GENERAL_PATH}/../vendor/saz1051/scripts/oipc_init.sh"
-	if [ -f "${VENDOR_INIT}" ]; then
-		install -m 0755 "${VENDOR_INIT}" "${TARGET_DIR}/init"
+	SAZ_VENDOR="${BR2_EXTERNAL_GENERAL_PATH}/../vendor/saz1051"
+
+	# (1) /init. The stock general/overlay/init aborts unless /proc/filesystems
+	# has "overlay"; our kernel has no OVERLAY_FS. It does not actually panic --
+	# `trap on_exit EXIT` execs /sbin/init, so the board silently lands in stock
+	# busybox init with no /overlay and *no* board bring-up at all. Install our
+	# self-contained init instead. (On the reference device the equivalent is
+	# done from bootargs: init=/opt/oipc/oipc_init.sh.)
+	if [ -f "${SAZ_VENDOR}/scripts/oipc_init.sh" ]; then
+		install -m 0755 "${SAZ_VENDOR}/scripts/oipc_init.sh" "${TARGET_DIR}/init"
+	fi
+
+	# (2) majestic. The upstream hisilicon-hi3516cv6xx build is fetched from a
+	# *moving* target -- majestic.hi3516cv6xx.lite.master.tar.bz2 on OpenIPC's
+	# S3, where the ".master." build is whatever was published last. It no
+	# longer matches the binary this board was validated with (776496 B,
+	# md5 0705f264... vs the 961368 B build S3 serves today), and majestic is
+	# the one component that touches the MPP/VENC path at runtime. Ship the
+	# validated binary so the image reproduces the known-good set; drop this
+	# override to test the current upstream build instead.
+	if [ -f "${SAZ_VENDOR}/majestic" ]; then
+		install -m 0755 "${SAZ_VENDOR}/majestic" "${TARGET_DIR}/usr/bin/majestic"
 	fi
 fi
