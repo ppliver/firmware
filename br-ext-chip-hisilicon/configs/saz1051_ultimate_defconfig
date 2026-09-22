@@ -77,13 +77,21 @@ BR2_TARGET_ROOTFS_UBIFS=y
 BR2_TARGET_ROOTFS_UBIFS_LEBSIZE=0x1f000
 BR2_TARGET_ROOTFS_UBIFS_MINIOSIZE=0x800
 BR2_TARGET_ROOTFS_UBIFS_MAXLEBCNT=760
-BR2_TARGET_ROOTFS_UBIFS_COMPRESSION_ZLIB=y
-# BR2_TARGET_ROOTFS_UBIFS_COMPRESSION_LZO is not set
+# buildroot 2024.02 symbol names: "*_RT_*" is the run-time (mkfs -x) compressor.
+# The older "*_COMPRESSION_*" names no longer exist and kconfig silently drops
+# unknown symbols, which left mkfs.ubifs on its default (-x lzo) instead of the
+# zlib the device kernel was validated against.
+BR2_TARGET_ROOTFS_UBIFS_RT_ZLIB=y
+# BR2_TARGET_ROOTFS_UBIFS_RT_LZO is not set
 BR2_TARGET_ROOTFS_UBI=y
 BR2_TARGET_ROOTFS_UBI_PEBSIZE=0x20000
 # sub-page size is an int in Kconfig, not hex -- decimal here (0x800 == 2048)
 BR2_TARGET_ROOTFS_UBI_SUBSIZE=2048
-BR2_TARGET_ROOTFS_UBI_CFG="$(EXTERNAL_VENDOR)/board/$(OPENIPC_SOC_FAMILY)/ubinize.cfg"
+# 2024.02 split the old BR2_TARGET_ROOTFS_UBI_CFG into these two; without them
+# buildroot falls back to fs/ubi/ubinize.cfg, whose volume is named "rootfs",
+# and root=ubi0:ubifs then cannot resolve the volume at boot.
+BR2_TARGET_ROOTFS_UBI_USE_CUSTOM_CONFIG=y
+BR2_TARGET_ROOTFS_UBI_CUSTOM_CONFIG_FILE="$(EXTERNAL_VENDOR)/board/$(OPENIPC_SOC_FAMILY)/ubinize.cfg"
 
 # Packages
 BR2_PACKAGE_DROPBEAR_OPENIPC=y
