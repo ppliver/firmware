@@ -14,10 +14,13 @@
 #   * board init + bring-up scripts  -> /opt/oipc, /opt/tools
 #   * majestic.yaml                  -> /etc/majestic.yaml
 #
-# MPP userspace .so and the 128MB-tuned load_hisilicon come from the upstream
-# hisilicon-osdrv-hi3516cv6xx package (selected alongside this one). That
-# package installs load_hisilicon to /usr/bin, which is what oipc_init.sh calls
-# (its PATH puts /usr/bin ahead of /opt/oipc).
+# MPP userspace .so come from the upstream hisilicon-osdrv-hi3516cv6xx package
+# (selected alongside this one). That package also drops a load_hisilicon in
+# /usr/bin, but oipc_init.sh does NOT reach the loader through PATH -- it tests
+# the literal path /opt/oipc/load_hisilicon. With only the osdrv copy present the
+# init takes the `else` branch, prints "[1] load_hisilicon MISSING" and loads no
+# MPP module at all (no /dev/ot_mipi_rx, no sensor, no stream), so this package
+# must ship the board copy too.
 #
 # ABI note: the prebuilt open_*.ko were built against a kernel configured with
 # CONFIG_PM=n, matching saz1051.generic.config. Shipping them (instead of
@@ -76,8 +79,26 @@ define SAZ1051_VENDOR_INSTALL_TARGET_CMDS
 	$(INSTALL) -m 644 -t $(TARGET_DIR)/system/etc $(SAZ1051_VENDOR_TREE)/wifi/ws73_cfg.ini
 
 	# ---- board scripts ----
-	$(INSTALL) -m 755 -d $(TARGET_DIR)/opt/oipc $(TARGET_DIR)/opt/tools
+	$(INSTALL) -m 755 -d $(TARGET_DIR)/opt/oipc $(TARGET_DIR)/opt/oipc/sbin $(TARGET_DIR)/opt/tools
 	$(INSTALL) -m 755 -t $(TARGET_DIR)/opt/oipc $(SAZ1051_VENDOR_TREE)/scripts/oipc_init.sh
+
+	# load_hisilicon: oipc_init.sh tests /opt/oipc/load_hisilicon by absolute
+	# path (it is not resolved through PATH), so the osdrv copy in /usr/bin does
+	# not satisfy it. This is the board build new5 ran (7527 B, a68881c8).
+	$(INSTALL) -m 755 -t $(TARGET_DIR)/opt/oipc $(SAZ1051_VENDOR_TREE)/scripts/load_hisilicon
+
+	# /opt/oipc/sbin sits first on oipc_init.sh's PATH and deliberately shadows
+	# the real tools:
+	#   modprobe   -- busybox `modprobe <name>` cannot resolve hisilicon/open_*.ko
+	#                 (subdirectory, and modprobe-small ignores modules.dep), while
+	#                 load_hisilicon's insert_ko() runs `modprobe open_*` after a
+	#                 cd. The shim insmods by absolute path instead.
+	#   fw_printenv/ipcinfo -- pin totalmem=64M / osmem=32M / sensor=os05l10 so the
+	#                 MMZ geometry does not depend on reading the U-Boot env.
+	#   fw_setenv  -- set_allocator() writes mmz_allocator; no-op here.
+	# Byte-identical to the running new5 image.
+	$(INSTALL) -m 755 -t $(TARGET_DIR)/opt/oipc/sbin $(wildcard $(SAZ1051_VENDOR_TREE)/scripts/oipc_sbin/*)
+
 	$(INSTALL) -m 755 -t $(TARGET_DIR)/opt/tools $(SAZ1051_VENDOR_TREE)/scripts/sensor_mux.sh
 	$(INSTALL) -m 755 -t $(TARGET_DIR)/opt/tools $(SAZ1051_VENDOR_TREE)/scripts/bringup_wifi.sh
 	$(INSTALL) -m 755 -t $(TARGET_DIR)/opt/tools $(SAZ1051_VENDOR_TREE)/scripts/os05l10_replay.sh
