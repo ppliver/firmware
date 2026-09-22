@@ -32,7 +32,13 @@ jobs:
         run: |
           echo "nameserver 8.8.8.8" | sudo tee /etc/resolv.conf
           echo "CACHE_DATE=$(date +%m)" >> ${GITHUB_ENV}
+          # NOTE: `>> $GITHUB_ENV` only affects LATER steps, so export it here too.
+          # Without this the download below lands in buildroot's default
+          # $(O)/buildroot-*/dl while the build step (which does see the env var)
+          # extracts from $(O)/dl -> stamps say "downloaded" but the tarball is
+          # missing, and the build dies in host-pkgconf with "No such file".
           echo "BR2_DL_DIR=${GITHUB_WORKSPACE}/output/dl" >> ${GITHUB_ENV}
+          export BR2_DL_DIR="${GITHUB_WORKSPACE}/output/dl"
           make BOARD=${{matrix.platform}}_${{matrix.release}} br-source
 
       - name: Setup ccache
