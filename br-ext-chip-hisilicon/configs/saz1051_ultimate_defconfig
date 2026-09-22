@@ -60,6 +60,15 @@ BR2_PACKAGE_MOSQUITTO=y
 # modules stay unloaded. wpa_supplicant talks nl80211, so it works against the
 # vendor cfg80211 regardless of which .ko provides it.
 BR2_PACKAGE_WPA_SUPPLICANT=y
+# mbedtls-openipc is NOT optional here: libwebsockets-openipc's .mk does
+# `if BR2_PACKAGE_MBEDTLS_OPENIPC ... -DLWS_WITH_MBEDTLS=ON else ...=OFF`, and
+# with mbedTLS off its CMake falls back to auto-detecting OpenSSL -> configure
+# dies with "Could NOT find OpenSSL (missing: OPENSSL_CRYPTO_LIBRARY
+# OPENSSL_INCLUDE_DIR)". Upstream's cv6xx defconfig gets mbedTLS in transitively
+# via uacme-openipc; we dropped that package, so select it explicitly. This is
+# also the house convention: every upstream WiFi defconfig pairs
+# WPA_SUPPLICANT with MBEDTLS_OPENIPC.
+BR2_PACKAGE_MBEDTLS_OPENIPC=y
 
 # NAND rootfs (UBIFS + UBI) — geometry for DS35Q1GA
 # mkfs.ubifs -m 2048 -e 126976 -c 760 -x zlib ; ubinize -p 131072 -m 2048 -s 2048
