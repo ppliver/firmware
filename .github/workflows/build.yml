@@ -79,6 +79,16 @@ jobs:
             echo NANDFW=${NANDFW} >> ${GITHUB_ENV}
           fi
 
+      - name: Upload build artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware-${{matrix.platform}}-${{matrix.release}}
+          path: |
+            ${{ github.workspace }}/output/images/openipc.${{matrix.platform}}-nor-${{matrix.release}}.tgz
+            ${{ github.workspace }}/output/images/openipc.${{matrix.platform}}-nand-${{matrix.release}}.tgz
+          if-no-files-found: ignore
+
       - name: Upload firmware
         if: github.event_name != 'pull_request'
         uses: softprops/action-gh-release@v2
