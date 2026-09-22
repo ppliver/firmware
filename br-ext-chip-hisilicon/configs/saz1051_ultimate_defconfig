@@ -41,6 +41,16 @@ BR2_LINUX_KERNEL_CUSTOM_TARBALL=y
 BR2_LINUX_KERNEL_CUSTOM_TARBALL_LOCATION="https://github.com/openipc/linux/archive/$(OPENIPC_KERNEL).tar.gz"
 BR2_LINUX_KERNEL_USE_CUSTOM_CONFIG=y
 BR2_LINUX_KERNEL_CUSTOM_CONFIG_FILE="$(EXTERNAL_VENDOR)/board/$(OPENIPC_SOC_FAMILY)/$(BR2_OPENIPC_SOC_MODEL).generic.config"
+# Board wiring, kept out of the global all-patches/linux dir so it cannot leak
+# into another board that happens to build this same kernel:
+#   * USB dr_mode stays "otg" (as upstream) but needs host-mode; + init_mode="host"
+#     -> without them wing-usb self-switches to DEVICE, no xHCI host, no VBUS,
+#        and the WS73 module is never enumerated (see the kernel-rebuild skill).
+#   * sdio0 is the TF slot on this board (upstream has it disabled) and gives the
+#     rescue path from Linux; mmc0/sdio1 are unused here.
+#   * drivers/vendor/saz_pm_stub.c exports register_pm_notifier/unregister_pm_notifier,
+#     which CONFIG_PM=n removes but plat_soc.ko (WS73) links against.
+BR2_LINUX_KERNEL_PATCH="$(EXTERNAL_VENDOR)/board/$(OPENIPC_SOC_FAMILY)/saz1051-patches"
 BR2_ROOTFS_POST_IMAGE_SCRIPT="$(EXTERNAL_VENDOR)/board/$(OPENIPC_SOC_FAMILY)/post-image.sh"
 BR2_LINUX_KERNEL_ZIMAGE=y
 BR2_LINUX_KERNEL_XZ=y
