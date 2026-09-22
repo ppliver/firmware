@@ -65,6 +65,19 @@ BR2_PACKAGE_EXFATPROGS=y
 BR2_PACKAGE_UBOOT_TOOLS=y
 BR2_PACKAGE_IPTABLES=y
 BR2_PACKAGE_MOSQUITTO=y
+# Both of the next two default to y, so *omitting* the "# ... is not set" line
+# (very easy to do when a defconfig is copied/rewritten) silently turns them ON.
+# Upstream's cv6xx defconfig disables both; state it explicitly:
+#   * MOSQUITTO_BROKER installs /usr/sbin/mosquitto + mosquitto_pub/sub/rr +
+#     /etc/mosquitto/mosquitto.conf (+141K+103K+40K) and an S50mosquitto init
+#     script that start-stop-daemons the broker at boot. Nothing in this board's
+#     package set depends on libmosquitto (only OpenIPC's mqtt-bot does, and it
+#     is not selected), so the broker is pure weight.
+#   * IFUPDOWN_SCRIPTS drops the /etc/network/if-*.d helpers; this board brings
+#     the network up from oipc_init.sh/bringup_wifi.sh, and oipc_init.sh never
+#     runs /etc/init.d at all.
+# BR2_PACKAGE_IFUPDOWN_SCRIPTS is not set
+# BR2_PACKAGE_MOSQUITTO_BROKER is not set
 # Wireless: WS73 USB WiFi. Vendor cfg80211_v20/mac80211 ko are insmoded by
 # absolute path by bringup_wifi.sh; the in-tree CONFIG_CFG80211/MAC80211=m
 # modules stay unloaded. wpa_supplicant talks nl80211, so it works against the
