@@ -9,6 +9,11 @@
 case "$1" in
 	start)
 		export SENSOR=os05l10
+		# !!! 警告 (2026-09-23) !!! 切勿在此写 pinmux 0x1200 到 0x017940090/94。
+		# 这两个 pad 属于 *sensor I2C* 总线；一旦被切成 GPIO 模式，sensor 的
+		# I2C 会立即瘫痪（os05l10_reg_init failed -> VI 无帧 -> 主/子码流全黑）。
+		# 曾照搬原厂样例 opt/sample/ircut/ircut.sh 的地址导致整机长时间不出图。
+		# IR-cut 真正对应的 pad 疑似为原厂 muxfix 开机写入的 0x11130000/04（待验证）。
 		if [ ! -x /usr/bin/majestic ]; then
 			echo "S94: majestic missing, skip warm-up"
 			exit 0

@@ -3,6 +3,8 @@
 # are kept, so a default that changes in a later version still reaches you.
 image:
   rotate: 0
+# video0 = main stream (sensor native 2880x1620), video1 = sub stream.
+# Sub stream ON so the WebUI preview and /stream=1 work; main stays 5MP.
 video0:
   fps: 20
   enabled: true
@@ -11,7 +13,11 @@ video0:
 video1:
   fps: 15
   size: 704x576
-  enabled: false
+  enabled: true
+# !!! keep jpeg disabled !!!
+# The MJPEG channel adds a full-resolution encoder that steals MMZ. With
+# jpeg on, even a single H264 stream can fail with ERR_VENC_NO_MEM. Only
+# enable it after MMZ has room (see S70vendor: MMZ_RESERVE_M=48).
 jpeg:
   enabled: false
 audio:
@@ -22,8 +28,12 @@ watchdog:
   enabled: false
 hls:
   enabled: false
-# 本板未接 IRCUT 电磁线圈（原厂固件 IrCutOpen=-1/IrCutClose=-1 可证），
-# 关闭 "Drive the IR-cut filter"，否则 Web UI 持续报 no-pins 警告。
+# IR-cut：本板实物确有滤光片接线，但**正确 GPIO 尚未确定**，暂不启用。
+# !!! 重要教训 (2026-09-23) !!! 0x017940090 / 0x017940094 是 *sensor I2C* 的
+# pad，写 0x1200 会立刻掐断 sensor I2C（os05l10_reg_init failed、VI 无帧、
+# 主/子码流全黑）。切勿照搬原厂样例 opt/sample/ircut/ircut.sh 的这两个地址。
+# 疑似真正的 IR-cut pad = 原厂 muxfix 开机写入的 0x11130000 / 0x11130004
+# （值 0x1200），待后续用可控脉冲+看画面颜色验证后再启用。
 # 红外补光：原厂 gpio.json 的 FillLed.IRLed=9，Enable=1（高电平点亮）。
 # majestic 的这个版本没有独立 irLedPin，"camera light"(=backlightPin) 即夜视补光。
 # 昼夜判定：无光敏/无阈值时 majestic 按曝光自动判(night=快门打满)。
