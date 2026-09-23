@@ -9,6 +9,9 @@
 #       -> /lib/modules/5.10.221/hisilicon
 #   * OS05L10 sensor userspace lib + ini
 #       -> /usr/lib/sensors, /etc/sensors, /etc, /system/etc
+#   * factory board GPIO definition (YHTX_HS_IPC_SAZ1051_gpio.json)
+#       -> /etc/gpio, /system/etc/gpio
+#       Shipped for on-device documentation; nothing parses it yet.
 #   * WS73 USB-WiFi driver ko + RF firmware + wpa_supplicant config
 #       -> /opt/saz_wifi, /etc/ws73, /etc/wireless
 #   * board init + bring-up scripts  -> /opt/oipc, /opt/tools
@@ -59,6 +62,24 @@ define SAZ1051_VENDOR_INSTALL_TARGET_CMDS
 	$(INSTALL) -m 644 -t $(TARGET_DIR)/etc/sensors $(SAZ1051_VENDOR_TREE)/sensors/os05l10.ini
 	$(INSTALL) -m 644 -t $(TARGET_DIR)/etc          $(SAZ1051_VENDOR_TREE)/sensors/os05l10.ini
 	$(INSTALL) -m 644 -t $(TARGET_DIR)/system/etc   $(SAZ1051_VENDOR_TREE)/sensors/os05l10.ini
+
+	# ---- factory board GPIO definition ----
+	# The authoritative wiring table for this exact model, copied verbatim from
+	# the factory system partition (system/etc/gpio/, five identical copies,
+	# md5 55525a408e71ba0807388c7a3c0dd3d2) and confirmed field for field by
+	# the factory swapp boot log still resident in the data partition:
+	#   sw_gpio_init ... ircut_open:-1, ircut_close:-1, led:9, white:10,
+	#                     red:6, oth:7, speaker:60, rsetkey:61
+	# Nothing in this firmware parses it yet -- it ships so the board wiring is
+	# documented on the device itself, and so a future LED / IR-cut helper has
+	# a stable source of truth. /etc/gpio mirrors the vendor's own path;
+	# /system/etc/gpio is the other location the vendor tree uses.
+	# See vendor/saz1051/gpio/SOURCE.txt for the full evidence chain.
+	$(INSTALL) -m 755 -d $(TARGET_DIR)/etc/gpio $(TARGET_DIR)/system/etc/gpio
+	$(INSTALL) -m 644 -t $(TARGET_DIR)/etc/gpio \
+		$(SAZ1051_VENDOR_TREE)/gpio/YHTX_HS_IPC_SAZ1051_gpio.json
+	$(INSTALL) -m 644 -t $(TARGET_DIR)/system/etc/gpio \
+		$(SAZ1051_VENDOR_TREE)/gpio/YHTX_HS_IPC_SAZ1051_gpio.json
 
 	# ---- WS73 USB WiFi ----
 	$(INSTALL) -m 755 -d $(TARGET_DIR)/opt/saz_wifi

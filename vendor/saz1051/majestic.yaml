@@ -24,6 +24,12 @@ audio:
   enabled: false
   volume: 30
   outputVolume: 30
+  # 原厂板级定义 Speaker = 60（另有 Speaker_chn = Right），由原厂 tPlayaudio
+  # 经 sw_gpio_speaker_open 驱动（实测日志 spk_pin=60）。本机当前
+  # /proc/asound/cards 为空（no soundcards），音频链路并没有跑起来，所以这里
+  # 只是把厂商给的功放使能脚记录下来：一旦音频可用，此脚即为正确值。
+  # 来源见 /etc/gpio/YHTX_HS_IPC_SAZ1051_gpio.json 与 vendor/saz1051/gpio/SOURCE.txt
+  speakerPin: 60
 watchdog:
   enabled: false
 hls:
@@ -53,4 +59,29 @@ nightMode:
   # 就是 -1（未接），见数据分区日志 "ircut_open:-1"。
   irCut: off
   backlightEnabled: true
+  # backlightPin = 原厂 FillLed.IRLed（GPIO 9）。实测原厂 tIRCutProc 在
+  # swapp ircut_callback 里 set gpio9:1，与 gpio.json 一致 -> 夜视补光就是它。
   backlightPin: 9
+  # ---------------------------------------------------------------------------
+  # 本机原厂板级 GPIO 总表
+  #   权威来源 = 原厂 system 分区(YHTX_HS_IPC_SAZ1051_gpio.json，5 份副本
+  #   md5 全同 55525a40…)，并逐项被原厂 swapp 启动日志独立印证：
+  #     sw_gpio_init ... ircut_open:-1, ircut_close:-1, led:9, white:10,
+  #                       red:6, oth:7, speaker:60, rsetkey:61
+  #   运行时实测统计见 tools/mtd12_gpio_scan.py
+  #
+  #   pin  原厂名             majestic 对应              运行时实测
+  #   ---  ----------------  --------------------------  -------------------------
+  #     9  FillLed.IRLed     nightMode.backlightPin  ✅   tIRCutProc 点亮（夜视补光）
+  #    60  Speaker           audio.speakerPin        ✅   tAoCheck 驱动（本机无声卡）
+  #     6  TipsLed.RedLed    无对应项                     LedFlipProc 翻转（红灯）
+  #     7  TipsLed.OthLed    无对应项                     LedFlipProc 高频翻转（状态灯）
+  #    10  FillLed.WhiteLed  无对应项                     原厂从未 set 过
+  #    61  Rsetkey          无对应项（非门铃键）           原厂从未 set 过
+  #    -1  IrCut.Open/Close 无对应项（本板出厂未接线圈）   tIRCutProc 有完整日夜状态机
+  #                                                        却从不驱动滤光片
+  #     0  （json 未定义）    无对应项                     LedFlipProc 驱动过 1 次，用途未知
+  #
+  # 注意：原厂日志区是环形缓冲、会被后续启动覆盖（592 次 sw_gpio_set 只还原出
+  # 323 处），所以上表是"下界"—— 能证明这些被用过，不能证明没有别的。
+  # ---------------------------------------------------------------------------
