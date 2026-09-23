@@ -200,4 +200,11 @@ if grep -q '^BR2_OPENIPC_SOC_MODEL="saz1051"' "${BR2_CONFIG}"; then
 	if [ -f "${SAZ_VENDOR}/majestic" ]; then
 		install -m 0755 "${SAZ_VENDOR}/majestic" "${TARGET_DIR}/usr/bin/majestic"
 	fi
+
+	# fw_env.config -- 让真 fw_printenv/fw_setenv(/usr/sbin, uboot-tools) 找到
+	# NAND env 分区。没有它官方 WebUI network.cgi 的 SSID/PSK 存储链
+	# (fw_setenv wlanssid/wlanpass) 静默失效。布局实测: mtd1 env.bin 512K,
+	# PEB 128K, U-Boot saveenv 验证过 size 0x40000 读写均 OK。
+	printf '/dev/mtd1 0x0 0x40000 0x20000\n' \
+		> "${TARGET_DIR}/etc/fw_env.config"
 fi

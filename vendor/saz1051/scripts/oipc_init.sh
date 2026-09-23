@@ -135,7 +135,9 @@ say "[3] bringup_wifi.sh -> /tmp/wifi.log"
 /opt/tools/bringup_wifi.sh > /tmp/wifi.log 2>&1 &
 
 # ---- 5. dropbear SSH(取日志/传文件) ----
-mkdir -p /etc/dropbear /var/run
+# /run/lock 必须存在：真 fw_printenv/fw_setenv(uboot-tools) 的 lock 文件
+# 在 /var/lock(-> /run/lock)，缺了会 "Error opening lock file" 静默失败。
+mkdir -p /etc/dropbear /var/run /run/lock 2>/dev/null
 [ -x /usr/sbin/dropbear ] && dropbear -R -B -p 22 >/dev/null 2>&1
 say "[5] dropbear: $(ls /var/run 2>/dev/null | grep -a dropbear | tr '\n' ' ')"
 

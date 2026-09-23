@@ -47,14 +47,36 @@ if [ ! -e /sys/class/net/wlan0/phy80211 ]; then
 	log "WiFi FAIL: wlan0/phy80211 not present"; exit 1
 fi
 
+# ---- 配置真源：官方约定 env wlanssid/wlanpass（WebUI network.cgi 读写）----
+# env 有值 -> wpa_passphrase 生成 /tmp/wpa_supplicant.conf（与官方
+# /etc/network/interfaces.d/wlan0 的 pre-up 语义一致）；env 空 -> 退回构建时
+# 预置的 /etc/wireless/wpa_supplicant.conf（v5 兼容路径，从未配过 WebUI 也不断网）。
+SSID=$(fw_printenv -n wlanssid 2>/dev/null)
+PASS=$(fw_printenv -n wlanpass 2>/dev/null)
+WPA_CONF=/etc/wireless/wpa_supplicant.conf
+if [ -n "$SSID" ] && [ -n "$PASS" ] && command -v wpa_passphrase >/dev/null 2>&1; then
+	wpa_passphrase "$SSID" "$PASS" > /tmp/wpa_supplicant.conf 2>/dev/null
+	sed -i 's/#psk.*/scan_ssid=1/g' /tmp/wpa_supplicant.conf
+	WPA_CONF=/tmp/wpa_supplicant.conf
+	log "WiFi: using env wlanssid=$SSID"
+else
+	log "WiFi: env wlanssid/wlanpass empty -> builtin conf"
+fi
+
 ifconfig wlan0 0.0.0.0 up
-wpa_supplicant -B -Dnl80211 -iwlan0 -c /etc/wireless/wpa_supplicant.conf -f /tmp/wp.log 2>/dev/null
+wpa_supplicant -B -Dnl80211 -iwlan0 -c "$WPA_CONF" -f /tmp/wp.log 2>/dev/null
 i=0
 while [ $i -lt 45 ]; do
 	wpa_cli -iwlan0 status 2>/dev/null | grep -q COMPLETED && break
 	sleep 2
 	i=$((i+1))
 done
-ifconfig wlan0 192.168.6.178 netmask 255.255.255.0
-route add default gw 192.168.6.1 wlan0 2>/dev/null
+# IP：官方 interfaces.d/wlan0 = dhcp；DHCP 拿不到再退回 v5 静态地址兜底
+if udhcpc -i wlan0 -n -q -t 4 >/dev/null 2>&1; then
+	log "WiFi: dhcp OK"
+else
+	ifconfig wlan0 192.168.6.178 netmask 255.255.255.0
+	route add default gw 192.168.6.1 wlan0 2>/dev/null
+	log "WiFi: dhcp failed -> static 192.168.6.178 fallback"
+fi
 log "WiFi up: $(ifconfig wlan0 | grep inet)"
