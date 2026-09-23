@@ -39,5 +39,18 @@ hls:
 # 昼夜判定：无光敏/无阈值时 majestic 按曝光自动判(night=快门打满)。
 nightMode:
   irCutEnabled: false
+  # --- 消除 WebUI 的 "Majestic cannot move the IR-cut filter" 弹窗 ---
+  # 该文案出自 majestic-webui 的 a/ircut-check.js，判据是
+  #   k = ("off" === nightMode.irCut)   → irCut 为 off/false 时不提示
+  #   否则若 irCutPin1 为空 → 弹 "Nothing is connected to the filter..."
+  # 本机 majestic 二进制只认 irCutEnabled，没有 irCut，所以 WebUI 读不到、
+  # 当 "auto" 处理，于是误报。majestic 不校验 yaml 键名，写在下面的未知键
+  # irCut 会被原样透传进 /api/v1/config.json（实测 irCut=false 出现），
+  # WebUI 读到布尔 false 即判为 "off"，提示消失。
+  # 注意 YAML 1.1 里 off == false，所以这里读回来是 false 而不是字符串 "off"，
+  # 而 ircut-check.js 的 i() 恰好把 !1===e 也算 "off"，两种写法都行。
+  # 此键只影响 WebUI 判断，majestic 自身不使用它；IR-cut 引脚在原厂定义里
+  # 就是 -1（未接），见数据分区日志 "ircut_open:-1"。
+  irCut: off
   backlightEnabled: true
   backlightPin: 9
