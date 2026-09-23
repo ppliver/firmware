@@ -326,9 +326,31 @@ say "[7] wlan0 : $(ifconfig wlan0 2>/dev/null | grep inet || echo none)"
 say "[7] wifi.log(tail):"; tail -12 /tmp/wifi.log 2>/dev/null | while read l; do echo "    | $l"; done
 say "[7] MemAvailable=$(memavail)kB  (low-water restart at ${MEM_LOW_KB}kB)"
 say "=== CONSOLE (logs: /tmp/{wifi,majestic,boot_diag}.log) ==="
+# ---- 8. PID1 信号语义补全（busybox init 不在，reboot/poweroff 没有接收方）----
+# 本脚本是 PID1。WebUI restart.cgi 执行 `reboot -d1`（不带 -f）=> busybox reboot
+# 只给 PID1 发 SIGTERM；poweroff 发 SIGUSR2。shell 脚本默认不处理这些信号 =>
+# 用户看到"点了重启没反应"。这里显式接管：TERM=reboot、USR2=poweroff。
+# 注意：sh 的 trap 要等前台子进程退出才执行，所以主循环必须用短 sleep（<=1s），
+# 否则 WebUI 重启会卡到 sleep 超时才生效。
+do_reboot() {
+	say "[init] SIGTERM caught -> reboot -f"
+	sync 2>/dev/null
+	reboot -f
+}
+do_poweroff() {
+	say "[init] SIGUSR2 caught -> poweroff -f"
+	sync 2>/dev/null
+	poweroff -f
+}
+trap do_reboot TERM
+trap do_poweroff USR2
 # init(pid1) 不能退出(会让内核 panic/重启循环)：串口 shell 退出后自动重开。
-while true; do
-	/bin/sh
+# console 移入后台子壳，PID1 主循环保持 1s 粒度空转——trap 的最坏延迟 1s。
+( while true; do
+	/bin/sh </dev/console >/dev/console 2>&1
 	say "[init] console shell exited, respawning"
+	sleep 1
+done ) &
+while :; do
 	sleep 1
 done
