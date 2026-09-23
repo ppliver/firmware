@@ -70,6 +70,10 @@ BR2_PACKAGE_BUSYBOX_CONFIG="$(BR2_EXTERNAL)/package/busybox/busybox.config"
 # hisilicon NAND defconfigs ship it for exactly that reason.
 BR2_PACKAGE_MTD=y
 BR2_PACKAGE_EXFATPROGS=y
+# e2fsprogs: mkfs.ext4/e2fsck for the persistent /etc data area on the TF card
+# (oipc_init [0a] formats the card region past the squashfs once, then mounts
+# it as the overlay upper). mke2fs/mkfs.ext4 are installed unconditionally.
+BR2_PACKAGE_E2FSPROGS=y
 BR2_PACKAGE_UBOOT_TOOLS=y
 BR2_PACKAGE_IPTABLES=y
 BR2_PACKAGE_MOSQUITTO=y

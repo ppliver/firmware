@@ -76,33 +76,62 @@ say "mem    : MemAvailable=$(memavail)kB"
 diag "=== boot diag (init v2) ==="
 diag "cmdline: $(cat /proc/cmdline)"
 
-# ---- 0a. ★ 让 /etc 可写（TF 路线 rootfs 是只读 squashfs，/etc 写不进）----
-# 症状（v6 首刷实测）：WebUI 初始化向导设密码报
-#   "The password could not be saved. Check the camera's log."
-#   -> 向导要写 /etc/shadow，/ 在 squashfs ro 上，写必然 EROFS。
-# 同一根因还打死：dropbear -R 建 host key（SSH 全挂）、majestic 的
-# /etc/majestic.token（每次操作都要重新登录）。v5 的 [0c] 段即为此而设，
-# v6 重写时丢失 -> 这里原样恢复。
-# 注：内核现在有 overlayfs，但 TF 整卡 squashfs 没有可写背衬分区，tmpfs 仍是
-# TF 路线的现实上限：/etc 改动**重启即失**。要真持久化得给 TF 卡分区做
-# overlay upper（见 tf_boot TODO）。
-if ! touch /etc/.rwtest 2>/dev/null; then
-	mkdir -p /tmp/.etc_ro
-	mount --bind /etc /tmp/.etc_ro 2>/dev/null
-	mount -t tmpfs -o size=4M,mode=755 tmpfs /etc 2>/dev/null
-	cp -a /tmp/.etc_ro/. /etc/ 2>/dev/null
-	umount /tmp/.etc_ro 2>/dev/null
-	rmdir /tmp/.etc_ro 2>/dev/null
-	rm -f /etc/.rwtest 2>/dev/null
-	if touch /etc/.rwtest 2>/dev/null; then
-		rm -f /etc/.rwtest 2>/dev/null
-		say "[0a] /etc -> tmpfs(4M) writable OK, entries=$(ls /etc 2>/dev/null | wc -l)"
-	else
-		say "[0a] !! /etc still read-only -> SSH hostkey / Web token / wizard will fail"
+# ---- 0a. /etc 可写 + 持久化（TF 路线 rootfs 是只读 squashfs）----
+# 症状（v6 首刷实测）：向导写 /etc/shadow EROFS -> "The password could not be
+# saved."；同一根因打死 dropbear hostkey 和 /etc/majestic.token。
+# 两级策略：
+#  (i) 持久化（首选）：TF 卡 squashfs 之后的空间做 ext4 数据区，overlayfs 盖 /etc
+#      （lower=/rom/etc 出厂只读，upper=卡上数据区）。WebUI 写的所有配置
+#      （shadow / majestic.yaml / TZ / ntp.conf / network/interfaces.d / ...）
+#      重启后仍在。布局：/dev/mmcblk0 偏移 64MiB 起（必须 >= rootfs.squashfs 的
+#      构建 cap 64M，见 Makefile PREPARE_REPACK）。首次启动 mkfs.ext4 一次性格式
+#      化。/rom 另挂原厂 squashfs——官方 WebUI 的 network.cgi/time.cgi 读
+#      /rom/etc/* 取出厂默认。
+#  (ii) 兜底：任一步失败退回 tmpfs（改动重启即失，系统可用）。v5 序列原样。
+# 依赖：内核 CONFIG_EXT4_FS + e2fsprogs(mkfs.ext4) + busybox losetup(-o)。
+etc_persisted=""
+if [ -b /dev/mmcblk0 ]; then
+	[ -e /dev/loop0 ] || mknod /dev/loop0 b 7 0 2>/dev/null
+	mkdir -p /rom /data
+	if mount -t squashfs -o ro /dev/mmcblk0 /rom 2>/dev/null; then
+		if losetup -o $((64*1024*1024)) /dev/loop0 /dev/mmcblk0 2>/dev/null; then
+			if ! mount -t ext4 /dev/loop0 /data 2>/dev/null; then
+				# 首启：格式化一次（保守 fs 特性，兼容老内核）
+				mkfs.ext4 -F -q -L saz_data -O ^64bit,^metadata_csum \
+					/dev/loop0 2>/dev/null && \
+					mount -t ext4 /dev/loop0 /data 2>/dev/null
+			fi
+			if grep -q " /data ext4" /proc/mounts 2>/dev/null; then
+				mkdir -p /data/etc /data/work
+				if mount -t overlay overlay \
+					-o lowerdir=/rom/etc,upperdir=/data/etc,workdir=/data/work \
+					/etc 2>/dev/null; then
+					etc_persisted=1
+					say "[0a] /etc -> overlay persistent (ext4 @mmcblk0+64M) OK, entries=$(ls /etc 2>/dev/null | wc -l)"
+				fi
+			fi
+		fi
 	fi
-else
-	rm -f /etc/.rwtest 2>/dev/null
-	say "[0a] /etc already writable (overlay?)"
+fi
+if [ -z "$etc_persisted" ]; then
+	if ! touch /etc/.rwtest 2>/dev/null; then
+		mkdir -p /tmp/.etc_ro
+		mount --bind /etc /tmp/.etc_ro 2>/dev/null
+		mount -t tmpfs -o size=4M,mode=755 tmpfs /etc 2>/dev/null
+		cp -a /tmp/.etc_ro/. /etc/ 2>/dev/null
+		umount /tmp/.etc_ro 2>/dev/null
+		rmdir /tmp/.etc_ro 2>/dev/null
+		rm -f /etc/.rwtest 2>/dev/null
+		if touch /etc/.rwtest 2>/dev/null; then
+			rm -f /etc/.rwtest 2>/dev/null
+			say "[0a] /etc -> tmpfs(4M) writable OK (volatile!), entries=$(ls /etc 2>/dev/null | wc -l)"
+		else
+			say "[0a] !! /etc still read-only -> SSH hostkey / Web token / wizard will fail"
+		fi
+	else
+		rm -f /etc/.rwtest 2>/dev/null
+		say "[0a] /etc already writable (overlay?)"
+	fi
 fi
 
 # ---- 0b. WS73 射频参数（plat_soc 需要，必须先于驱动存在）----
@@ -140,6 +169,17 @@ say "[3] bringup_wifi.sh -> /tmp/wifi.log"
 mkdir -p /etc/dropbear /var/run /run/lock 2>/dev/null
 [ -x /usr/sbin/dropbear ] && dropbear -R -B -p 22 >/dev/null 2>&1
 say "[5] dropbear: $(ls /var/run 2>/dev/null | grep -a dropbear | tr '\n' ' ')"
+
+# ---- 5a. ntpd（官方 S49ntpd 的 TF 等价物：busybox ntpd 直读 /etc/ntp.conf）----
+# 板上无电池 RTC；WebUI time 页写 /etc/TZ、/etc/timezone、/etc/ntp.conf（现已是
+# overlay 持久化）。没 ntpd 时钟永远停在构建时刻 -> 日志/录像时间全错。
+# ntpd 自带重试：WiFi 还没连上也无妨，连上后自动对时。
+if [ -x /usr/sbin/ntpd ] && [ -f /etc/ntp.conf ]; then
+	ntpd 2>/dev/null &
+	say "[5a] ntpd started (conf=/etc/ntp.conf)"
+else
+	say "[5a] ntpd skipped (no /usr/sbin/ntpd or /etc/ntp.conf)"
+fi
 
 # ---- 5b. 等 MIPI 设备节点就绪 ----
 n=0
