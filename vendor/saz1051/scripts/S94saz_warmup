@@ -1,0 +1,43 @@
+#!/bin/sh
+# SAZ1051 NAND-boot MIPI lane-mode warm-up (ported from vendor oipc_init.sh [6])
+# Runs AFTER S70vendor (sensor/MPP modules loaded) and BEFORE S95majestic.
+# Root cause: open_mipi_rx needs lane mode set (via majestic SET_DEV_ATTR) before
+# ENABLE_CLOCK/UNRESET; cold boot leaves lane mode unset -> PHY never unparks ->
+# VI receives no frames -> RTSP black. We run majestic once to set lane mode,
+# gracefully stop it, then reload open_isp (keeps lane mode) so the real majestic
+# (S95majestic) gets a working MIPI link.
+case "$1" in
+	start)
+		export SENSOR=os05l10
+		if [ ! -x /usr/bin/majestic ]; then
+			echo "S94: majestic missing, skip warm-up"
+			exit 0
+		fi
+		echo "S94: MIPI lane-mode warm-up start"
+		: > /tmp/majestic.log
+		/usr/bin/majestic -s >> /tmp/majestic.log 2>&1 &
+		WARM=$!
+		n=0
+		while [ $n -lt 80 ]; do
+			grep -qa 'SET_DEV_ATTR' /tmp/majestic.log 2>/dev/null && break
+			kill -0 $WARM 2>/dev/null || break
+			n=$((n + 1)); sleep 0.5
+		done
+		echo "S94: SET_DEV_ATTR seen after ${n} polls"
+		sleep 2
+		kill -INT $WARM 2>/dev/null
+		wait $WARM 2>/dev/null
+		sleep 4
+		if lsmod 2>/dev/null | grep -q '^open_isp'; then
+			rmmod open_isp 2>/dev/null && modprobe open_isp 2>/dev/null \
+				&& echo "S94: open_isp reloaded (lane mode kept)"
+		fi
+		echo "S94: warm-up done"
+		;;
+	stop|restart|reload)
+		;;
+	*)
+		echo "Usage: $0 {start}"
+		exit 1
+		;;
+esac

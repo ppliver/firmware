@@ -324,4 +324,19 @@ if [ "$1" = "rtl8188fu-t31-aoni-e97vj62" ]; then
   exit 0
 fi
 
+# SAZ1051 WS73 USB WiFi (vendor driver).
+# $soc on this board is reported by ipcinfo as hi3516cv613 (NOT cv610), so the
+# SoC token in the id MUST be hi3516cv613 or OpenIPC's network.cgi
+# adapter_scan() skips this entry and the WebUI dropdown stays empty.
+# wifi_soc_v15.ko is also installed to /lib/modules/5.10.221 (see
+# saz1051-vendor.mk) so adapter_scan's `find /lib/modules' existence check
+# passes. The real ordered bring-up (muxfix/plat_soc/wifi_soc_v15 + ws73_cfg.ini)
+# is done by /opt/tools/bringup_wifi.sh; the modprobe line below exists only so
+# the WebUI can detect the driver.
+if [ "$1" = "ws73-hi3516cv613-saz1051" ]; then
+	modprobe wifi_soc_v15
+	/opt/tools/bringup_wifi.sh
+	exit 0
+fi
+
 exit 1

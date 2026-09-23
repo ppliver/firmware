@@ -77,6 +77,15 @@ define SAZ1051_VENDOR_INSTALL_TARGET_CMDS
 	$(INSTALL) -m 644 -t $(TARGET_DIR)/etc/ws73 $(SAZ1051_VENDOR_TREE)/wifi/ws73/ws73.bin
 	$(INSTALL) -m 644 -t $(TARGET_DIR)/etc        $(SAZ1051_VENDOR_TREE)/wifi/ws73_cfg.ini
 	$(INSTALL) -m 644 -t $(TARGET_DIR)/system/etc $(SAZ1051_VENDOR_TREE)/wifi/ws73_cfg.ini
+	# Expose the WS73 ko chain under /lib/modules/5.10.221 so OpenIPC's
+	# network.cgi adapter_scan() can discover the adapter and offer it in the
+	# WebUI "Wireless adapter" dropdown. Runtime loading is still performed by
+	# /opt/tools/bringup_wifi.sh via explicit insmod (full ordered sequence +
+	# ws73_cfg.ini); this copy only satisfies adapter_scan's
+	# `find /lib/modules -name '*.ko'` existence check. The modprobe line in
+	# the usb entry (ws73-hi3516cv613-saz1051) references wifi_soc_v15.ko.
+	$(INSTALL) -m 644 -t $(TARGET_DIR)/lib/modules/5.10.221 \
+		$(wildcard $(SAZ1051_VENDOR_TREE)/wifi/*.ko)
 
 	# ---- board scripts ----
 	$(INSTALL) -m 755 -d $(TARGET_DIR)/opt/oipc $(TARGET_DIR)/opt/oipc/sbin $(TARGET_DIR)/opt/tools
@@ -106,6 +115,15 @@ define SAZ1051_VENDOR_INSTALL_TARGET_CMDS
 	# Official init chain: bring the WS73 radio up after S40network and
 	# S41bootmsg. The TF route reaches the same bring-up from oipc_init.sh.
 	$(INSTALL) -m 755 -t $(TARGET_DIR)/etc/init.d $(SAZ1051_VENDOR_TREE)/scripts/S42saz_wifi
+
+	# S94saz_warmup: MIPI lane-mode warm-up. Runs AFTER the vendor init that
+	# loads the MPP/sensor modules (S70vendor) and BEFORE S95majestic. Root
+	# cause it fixes: open_mipi_rx needs lane mode set (via majestic
+	# SET_DEV_ATTR) before ENABLE_CLOCK/UNRESET; a cold boot leaves lane mode
+	# unset -> PHY never unparks -> VI gets no frames -> black RTSP. The
+	# script runs majestic -s once to set lane mode, stops it, then reloads
+	# open_isp (lane mode persists) so the real S95majestic gets a live link.
+	$(INSTALL) -m 755 -t $(TARGET_DIR)/etc/init.d $(SAZ1051_VENDOR_TREE)/scripts/S94saz_warmup
 
 	# ---- majestic config (validated: video0 only, audio/HLS off) ----
 	$(INSTALL) -m 644 -t $(TARGET_DIR)/etc $(SAZ1051_VENDOR_TREE)/majestic.yaml
