@@ -1,0 +1,18 @@
+#!/bin/sh
+# SAZ1051 WS73 USB WiFi bring-up for the official init chain.
+# S70vendor loads the MPP modules via load_hisilicon; this starts the radio
+# (vendor ko set + wpa_supplicant + fixed IP) after S40network/S41bootmsg.
+# The TF route reaches the same bring-up from oipc_init.sh instead.
+case "$1" in
+	start)
+		/opt/tools/bringup_wifi.sh
+		;;
+
+	stop)
+		;;
+
+	*)
+		echo "Usage: $0 {start}"
+		exit 1
+		;;
+esac

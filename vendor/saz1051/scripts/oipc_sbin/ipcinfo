@@ -1,10 +1,12 @@
 #!/bin/sh
-# OpenIPC-on-TF shim: 本 TF rootfs 无 ipcinfo(OpenIPC 的 IPCam 信息工具)。
-# S70vendor 用 `ipcinfo -v` 选 load_<soc> 脚本; load_hisilicon 仅在未显式给 SENSOR 时才用 --short-sensor。
+# OpenIPC-on-TF shim: 本 TF rootfs 无真 ipcinfo(OpenIPC 的 IPCam 信息工具)。
+# S70vendor 用 `ipcinfo -v` 选 load_<soc> 脚本; load_hisilicon 仅在未显式给
+# SENSOR 时才用 --short-sensor; sysupgrade 用 `-F` 判 flash 类型(NOR/NAND)。
 case "$1" in
 	--chip-name)    echo hi3516cv610 ;;
 	--short-sensor) echo os05l10 ;;
 	-v)             echo 3516cv610_20s ;;
+	-F)             echo nand ;;
 	*)              echo hi3516cv610 ;;
 esac
 exit 0

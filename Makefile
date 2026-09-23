@@ -168,9 +168,13 @@ ifeq ($(BR2_OPENIPC_SOC_FAMILY),"hi3516cv6xx")
 # SAZ1051 (cv610 + 128 MB SPI-NAND) uses the UBI rootfs branch: U-Boot on this
 # board boots a FIT, so the repack pairs uImage (the FIT built by post-image.sh)
 # with rootfs.ubi. Caps are generous -- the image is ~17 MB on this part.
+# rootfs.squashfs rides along as an extra file (upstream hisilicon NAND
+# convention): sysupgrade's updatevol path flashes it into the rootfs volume,
+# and on this board it doubles as the TF-card rootfs (bad NAND blocks make
+# the TF route the fallback deployment).
 ifeq ($(BR2_TARGET_ROOTFS_UBI),y)
 	@$(call CHECK_SIZE,uImage,8192)
-	@$(call PREPARE_REPACK,uImage,8192,rootfs.ubi,65536,nand)
+	@$(call PREPARE_REPACK,uImage,8192,rootfs.ubi,65536,nand,rootfs.squashfs)
 else
 # The cv610 u-boot boots from a fixed table: 2048K(kernel) read whole by
 # `sf read ${kernaddr} ${kernsize}`, then 5120K(rootfs) at a fixed offset. The
@@ -289,7 +293,7 @@ endef
 define PREPARE_REPACK
 	$(if $(1),$(call CHECK_SIZE,$(1),$(2)))
 	$(if $(3),$(call CHECK_SIZE,$(3),$(4)))
-	$(call REPACK_FIRMWARE,$(1),$(3),$(5))
+	$(call REPACK_FIRMWARE,$(1),$(3),$(5),$(6))
 endef
 
 # The headroom line exists because "fits" and "only just fits" read the same in
@@ -312,10 +316,13 @@ define REPACK_FIRMWARE
 	cd $(TARGET)/images && if test -e rootfs.tar; then mv -f rootfs.tar rootfs.$(BR2_OPENIPC_SOC_MODEL).tar; fi
 	$(if $(1),cd $(TARGET)/images && if test -e $(1); then mv -f $(1) $(1).$(BR2_OPENIPC_SOC_MODEL); fi)
 	$(if $(2),cd $(TARGET)/images && if test -e $(2); then mv -f $(2) $(2).$(BR2_OPENIPC_SOC_MODEL); fi)
+	$(if $(4),cd $(TARGET)/images && if test ! -e $(4).$(BR2_OPENIPC_SOC_MODEL) && test -e $(4); then cp -f $(4) $(4).$(BR2_OPENIPC_SOC_MODEL); fi)
 	$(if $(1),cd $(TARGET)/images && md5sum $(1).$(BR2_OPENIPC_SOC_MODEL) > $(1).$(BR2_OPENIPC_SOC_MODEL).md5sum)
 	$(if $(2),cd $(TARGET)/images && md5sum $(2).$(BR2_OPENIPC_SOC_MODEL) > $(2).$(BR2_OPENIPC_SOC_MODEL).md5sum)
+	$(if $(4),cd $(TARGET)/images && md5sum $(4).$(BR2_OPENIPC_SOC_MODEL) > $(4).$(BR2_OPENIPC_SOC_MODEL).md5sum)
 	$(if $(1),$(eval KERNEL = $(1).$(BR2_OPENIPC_SOC_MODEL)),$(eval KERNEL =))
 	$(if $(2),$(eval ROOTFS = $(2).$(BR2_OPENIPC_SOC_MODEL)),$(eval ROOTFS =))
+	$(if $(4),$(eval EXTRA = $(4).$(BR2_OPENIPC_SOC_MODEL) $(4).$(BR2_OPENIPC_SOC_MODEL).md5sum),$(eval EXTRA =))
 	$(if $(1),$(eval KERNEL_MD5 = $(1).$(BR2_OPENIPC_SOC_MODEL).md5sum),$(eval KERNEL_MD5 =))
 	$(if $(2),$(eval ROOTFS_MD5 = $(2).$(BR2_OPENIPC_SOC_MODEL).md5sum),$(eval ROOTFS_MD5 =))
 	$(eval ARCHIVE = openipc.$(BR2_OPENIPC_SOC_MODEL)-$(3)-$(BR2_OPENIPC_VARIANT).tgz)
@@ -323,6 +330,6 @@ define REPACK_FIRMWARE
 	# camera loses the IMAGE and keeps the .md5sum that convicts it. The other
 	# order loses the checksum and leaves a short image that sysupgrade's
 	# `md5sum -c *.md5sum` then cannot see at all.
-	cd $(TARGET)/images && tar -czf $(ARCHIVE) $(KERNEL_MD5) $(ROOTFS_MD5) $(KERNEL) $(ROOTFS)
+	cd $(TARGET)/images && tar -czf $(ARCHIVE) $(KERNEL_MD5) $(ROOTFS_MD5) $(KERNEL) $(ROOTFS) $(EXTRA)
 	rm -f $(TARGET)/images/*.md5sum
 endef

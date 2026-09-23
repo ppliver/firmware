@@ -162,14 +162,31 @@ fi
 if grep -q '^BR2_OPENIPC_SOC_MODEL="saz1051"' "${BR2_CONFIG}"; then
 	SAZ_VENDOR="${BR2_EXTERNAL_GENERAL_PATH}/../vendor/saz1051"
 
-	# (1) /init. The stock general/overlay/init aborts unless /proc/filesystems
-	# has "overlay"; our kernel has no OVERLAY_FS. It does not actually panic --
-	# `trap on_exit EXIT` execs /sbin/init, so the board silently lands in stock
-	# busybox init with no /overlay and *no* board bring-up at all. Install our
-	# self-contained init instead. (On the reference device the equivalent is
-	# done from bootargs: init=/opt/oipc/oipc_init.sh.)
-	if [ -f "${SAZ_VENDOR}/scripts/oipc_init.sh" ]; then
-		install -m 0755 "${SAZ_VENDOR}/scripts/oipc_init.sh" "${TARGET_DIR}/init"
+	# (1) /init. The stock general/overlay/init used to abort unless
+	# /proc/filesystems had "overlay", and this kernel lacked OVERLAY_FS --
+	# so a self-contained init was installed as /init. CONFIG_OVERLAY_FS is
+	# back in the kernel, so the stock init is the default again: it mounts
+	# the ubifs rootfs_data volume (SquashFS-on-UBI, official hisilicon NAND
+	# layout) as the overlay upper, which is what makes /etc survive a
+	# reboot. The board init stays installed at /opt/oipc/oipc_init.sh for
+	# the TF-card route, which selects it explicitly from bootargs
+	# (init=/opt/oipc/oipc_init.sh); /init itself must remain the stock one.
+
+	# (1b) Board overrides that must deterministically beat the osdrv
+	# package copies (this script runs after every package):
+	#   * /usr/bin/load_hisilicon -- this copy derives the MMZ layout from
+	#     the cmdline mem= (v5 logic); the osdrv copy trusts totalmem from
+	#     the (unreadable) U-Boot env and mis-places mmz at mem=64M.
+	#   * /usr/lib/sensors/libsns_os05l10.so -- carries the I2C-write fix.
+	# S70vendor (official init chain) execs load_hisilicon via PATH, so the
+	# /usr/bin path is the one that must be patched.
+	if [ -f "${SAZ_VENDOR}/scripts/load_hisilicon" ]; then
+		install -m 0755 "${SAZ_VENDOR}/scripts/load_hisilicon" \
+			"${TARGET_DIR}/usr/bin/load_hisilicon"
+	fi
+	if [ -f "${SAZ_VENDOR}/sensors/libsns_os05l10.so" ]; then
+		install -m 0644 "${SAZ_VENDOR}/sensors/libsns_os05l10.so" \
+			"${TARGET_DIR}/usr/lib/sensors/libsns_os05l10.so"
 	fi
 
 	# (2) majestic. The upstream hisilicon-hi3516cv6xx build is fetched from a

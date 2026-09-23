@@ -103,6 +103,10 @@ define SAZ1051_VENDOR_INSTALL_TARGET_CMDS
 	$(INSTALL) -m 755 -t $(TARGET_DIR)/opt/tools $(SAZ1051_VENDOR_TREE)/scripts/bringup_wifi.sh
 	$(INSTALL) -m 755 -t $(TARGET_DIR)/opt/tools $(SAZ1051_VENDOR_TREE)/scripts/os05l10_replay.sh
 
+	# Official init chain: bring the WS73 radio up after S40network and
+	# S41bootmsg. The TF route reaches the same bring-up from oipc_init.sh.
+	$(INSTALL) -m 755 -t $(TARGET_DIR)/etc/init.d $(SAZ1051_VENDOR_TREE)/scripts/S42saz_wifi
+
 	# ---- majestic config (validated: video0 only, audio/HLS off) ----
 	$(INSTALL) -m 644 -t $(TARGET_DIR)/etc $(SAZ1051_VENDOR_TREE)/majestic.yaml
 

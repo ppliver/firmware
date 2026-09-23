@@ -3,8 +3,12 @@
 # Forked from hi3516cv6xx_ultimate_defconfig. Differences for this board:
 #   * SOC_MODEL = saz1051  (drives artifact name openipc.saz1051-nand-ultimate.tgz
 #     and the kernel config path board/hi3516cv6xx/saz1051.generic.config)
-#   * NAND rootfs: UBIFS + UBI (DS35Q1GA, PEB 128K / LEB 0x1f000 / subpage 2048)
-#     instead of NOR squashfs. ubinize volume name = ubifs (bootargs root=ubi0:ubifs).
+#   * NAND rootfs: official hisilicon NAND layout -- SquashFS-on-UBI
+#     (ubinize_hisilicon.cfg: RO squashfs in vol "rootfs" + autoresize
+#     "rootfs_data" for the overlay), geometry for DS35Q1GA
+#     (PEB 128K / LEB 0x1f000 / subpage 2048). The same rootfs.squashfs
+#     (shipped alongside rootfs.ubi by the repack) also deploys raw to a TF
+#     card -- bad NAND blocks on this board make the TF route the fallback.
 #   * Drop hisilicon-opensdk (we ship prebuilt open_*.ko via saz1051-vendor to
 #     preserve the CONFIG_PM=n ABI); add saz1051-vendor for the board blobs.
 #   * Add wpa_supplicant for the WS73 USB WiFi bring-up.
@@ -59,8 +63,12 @@ BR2_LINUX_KERNEL_DTS_SUPPORT=y
 # BR2_LINUX_KERNEL_DTB_IS_SELF_BUILT is not set
 BR2_LINUX_KERNEL_INTREE_DTS_NAME="hi3516cv610-demb"
 
-# Filesystem — 128MB SPI-NAND (DS35Q1GA)
+# Filesystem — 128MB SPI-NAND (DS35Q1GA), official hisilicon NAND layout
 BR2_PACKAGE_BUSYBOX_CONFIG="$(BR2_EXTERNAL)/package/busybox/busybox.config"
+# mtd-utils (ubiformat/ubiupdatevol/nandwrite/...): ubiformat is the only safe
+# primitive for rewriting a UBI MTD (erase counters + image_seq); official
+# hisilicon NAND defconfigs ship it for exactly that reason.
+BR2_PACKAGE_MTD=y
 BR2_PACKAGE_EXFATPROGS=y
 BR2_PACKAGE_UBOOT_TOOLS=y
 BR2_PACKAGE_IPTABLES=y
@@ -100,28 +108,37 @@ BR2_PACKAGE_WPA_SUPPLICANT_CLI=y
 # WPA_SUPPLICANT with MBEDTLS_OPENIPC.
 BR2_PACKAGE_MBEDTLS_OPENIPC=y
 
-# NAND rootfs (UBIFS + UBI) — geometry for DS35Q1GA
-# mkfs.ubifs -m 2048 -e 126976 -c 760 -x zlib ; ubinize -p 131072 -m 2048 -s 2048
-# volume name must be "ubifs" (bootargs: root=ubi0:ubifs)
+# RootFS — official hisilicon NAND recipe (SquashFS-on-UBI), mirrors
+# hi3516ev200_ultimate_defconfig: a read-only squashfs rootfs in UBI volume
+# "rootfs" and a writable autoresize "rootfs_data" volume that holds the
+# overlay (/etc persistence across sysupgrade). Boot side (NAND):
+#   root=/dev/ubiblock0_0 rootfstype=squashfs ubi.block=0,0 ubi.mtd=3,2048
+# Boot side (TF fallback, bad NAND blocks): the same rootfs.squashfs the
+# repack ships, written raw to the card:
+#   root=/dev/mmcblk0 rootfstype=squashfs
+# ubinize CLI options come from the UBI_* settings below (-p/-m/-s);
+# the UBIFS settings stay because buildroot's fs/ubi depends on fs/ubifs.
+BR2_TARGET_ROOTFS_SQUASHFS=y
+BR2_TARGET_ROOTFS_SQUASHFS4_XZ=y
 BR2_TARGET_ROOTFS_UBIFS=y
 BR2_TARGET_ROOTFS_UBIFS_LEBSIZE=0x1f000
 BR2_TARGET_ROOTFS_UBIFS_MINIOSIZE=0x800
 BR2_TARGET_ROOTFS_UBIFS_MAXLEBCNT=760
-# buildroot 2024.02 symbol names: "*_RT_*" is the run-time (mkfs -x) compressor.
-# The older "*_COMPRESSION_*" names no longer exist and kconfig silently drops
-# unknown symbols, which left mkfs.ubifs on its default (-x lzo) instead of the
-# zlib the device kernel was validated against.
+# buildroot 2024.02 split the old BR2_TARGET_ROOTFS_UBIFS_COMPRESSION_* names
+# into these "*_RT_*" (run-time) symbols; the older names no longer exist and
+# kconfig silently drops unknown symbols, which left mkfs.ubifs on its default
+# (-x lzo) instead of the zlib the device kernel was validated against.
 BR2_TARGET_ROOTFS_UBIFS_RT_ZLIB=y
 # BR2_TARGET_ROOTFS_UBIFS_RT_LZO is not set
 BR2_TARGET_ROOTFS_UBI=y
 BR2_TARGET_ROOTFS_UBI_PEBSIZE=0x20000
 # sub-page size is an int in Kconfig, not hex -- decimal here (0x800 == 2048)
 BR2_TARGET_ROOTFS_UBI_SUBSIZE=2048
-# 2024.02 split the old BR2_TARGET_ROOTFS_UBI_CFG into these two; without them
-# buildroot falls back to fs/ubi/ubinize.cfg, whose volume is named "rootfs",
-# and root=ubi0:ubifs then cannot resolve the volume at boot.
 BR2_TARGET_ROOTFS_UBI_USE_CUSTOM_CONFIG=y
-BR2_TARGET_ROOTFS_UBI_CUSTOM_CONFIG_FILE="$(EXTERNAL_VENDOR)/board/$(OPENIPC_SOC_FAMILY)/ubinize.cfg"
+# Official two-volume cfg: rootfs vol -> BINARIES_DIR/rootfs.squashfs,
+# rootfs_data (2MiB, autoresize). buildroot's fs/ubi.mk seds both
+# BINARIES_DIR and BR2_ROOTFS_UBIFS_PATH inside custom configs.
+BR2_TARGET_ROOTFS_UBI_CUSTOM_CONFIG_FILE="$(BR2_EXTERNAL)/scripts/ubifs/ubinize_hisilicon.cfg"
 
 # Packages
 BR2_PACKAGE_DROPBEAR_OPENIPC=y

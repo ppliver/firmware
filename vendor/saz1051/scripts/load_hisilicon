@@ -18,6 +18,24 @@ if [ -z "$os_mem_size" ]; then
 	os_mem_size=$(fw_printenv -n osmem | tr -d 'M')
 fi
 os_mem_size=${os_mem_size:=32}
+# [SAZ1051 v5] MMZ 布局改由 cmdline 的 mem= 推导，不再依赖 NAND env。
+# 旧逻辑 mem_total 取自 `fw_printenv -n totalmem`（启动早期必失败 -> 兜底 64），
+# 于是 mmz_size=64-os_mem 被同步压小，大 mem 直接 ERR_VENC_NO_MEM。
+# 本板 DDR 实测 128M（U-Boot: DDR size: 0x00000080），旧逻辑只用了 64M。
+_cm_mem=$(awk 'BEGIN{RS=" "} /^mem=[0-9]+M/{gsub(/^mem=|M.*$/,""); print; exit}' /proc/cmdline)
+MMZ_RESERVE_M=${MMZ_RESERVE_M:-32}
+if [ -n "$_cm_mem" ]; then
+	os_mem_size=$_cm_mem
+	mem_total=$(( os_mem_size + MMZ_RESERVE_M ))
+fi
+# 护栏: DDR 实测 128M。mem 过大 -> MMZ 会越过顶端, 宁可缩 MMZ 也不越界。
+if [ "$os_mem_size" -gt 96 ] 2>/dev/null; then
+	MMZ_RESERVE_M=$(( 128 - os_mem_size ))
+	mem_total=$(( os_mem_size + MMZ_RESERVE_M ))
+	echo "    [SAZ1051 v5] !! mem=${os_mem_size}M 偏大 -> MMZ 缩到 ${MMZ_RESERVE_M}M"
+	[ "$MMZ_RESERVE_M" -lt 24 ] && echo "    [SAZ1051 v5] !! MMZ < 24M: 5MP 会 ERR_VENC_NO_MEM"
+fi
+echo "    [SAZ1051 v5] mem layout: os=${os_mem_size}M mmz_reserve=${MMZ_RESERVE_M}M total=${mem_total}M"
 report_error() {
 	echo "******* Error: There's something wrong, please check! *****"
 	exit 1
