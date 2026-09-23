@@ -106,6 +106,26 @@ define SAZ1051_VENDOR_INSTALL_TARGET_CMDS
 	# ---- majestic config (validated: video0 only, audio/HLS off) ----
 	$(INSTALL) -m 644 -t $(TARGET_DIR)/etc $(SAZ1051_VENDOR_TREE)/majestic.yaml
 
+	# ---- proven-streaming majestic binary ----
+	# The prebuilt vendor majestic (in this tree) is the binary that has been
+	# validated to actually produce an RTSP stream on this board's MPP. OpenIPC's
+	# from-source majestic for hi3516cv6xx has never been validated against our
+	# prebuilt open_*.ko (CONFIG_PM=n ABI), so we install the vendor binary LAST
+	# (this package depends on `majestic`) to override /usr/bin/majestic.
+	# NOTE: this vendor binary's `-v` busy-loops; the WebUI patch below neutralizes
+	# the version probe so the deadloop can never peg the CPU / OOM the box.
+	$(INSTALL) -m 755 -t $(TARGET_DIR)/usr/bin $(SAZ1051_VENDOR_TREE)/majestic
+
+	# ---- defensive WebUI fix: neutralize `majestic -v` version probe ----
+	# Runs after majestic-webui is installed (this package depends on it).
+	# Use `sh` so it does not depend on the execute bit (git does not track it
+	# reliably on Windows checkouts).
+	sh $(SAZ1051_VENDOR_TREE)/scripts/patch_webui.sh $(TARGET_DIR)
+
 endef
+
+# Installed last so it overrides OpenIPC's from-source majestic binary and the
+# WebUI files (the `-v` probe patch must run after majestic-webui installs).
+SAZ1051_VENDOR_DEPENDENCIES = majestic majestic-webui
 
 $(eval $(generic-package))

@@ -1,19 +1,27 @@
 #!/bin/sh
-# SAZ1051 OpenIPC NAND init  (Hi3516CV610 + OS05L10 + WS73)   [v2 内存/稳定性优化]
+# SAZ1051 OpenIPC NAND init  (Hi3516CV610 + OS05L10 + WS73)   [v6 去整机重启·对齐标准 OpenIPC]
 # 取代 stock /init：本内核无 OVERLAY_FS，stock init 会在 `grep overlay /proc/filesystems`
 # 处 exit 1 -> kill init -> kernel panic。这里直接挂载 + 拉起全栈，逻辑自持、可诊断。
 #
 # v2 改动(2026-09-22)：针对"访问 web 后台 -> OOM -> clear_isp -> 内核 panic 重启"
-#   1. safe_reboot(): 统一走 sync + sysrq(b)，不再用无效的 reboot -f，且重启前 sync
-#      防止 UBIFS 半写节点(之前看到的 bad CRC 风暴就是 panic 时未 sync 的次生灾害)。
-#   2. majestic 异常退出(被 OOM/信号杀) 不再执行 rmmod open_isp —— 那时 VI 中断仍在跑，
-#      卸 ISP 必然 NULL 解引用 panic。改为整机重启兜底。
-#   3. tmpfs 限额(size=)：防止 HLS/日志把内存撑爆。
-#   4. 内存水位守护：MemAvailable 低于阈值时主动优雅重启 majestic，抢在 OOM 之前。
-#   5. majestic.log 轮转，避免长时间运行后无限增长。
+#   1. tmpfs 限额(size=)：防止 HLS/日志把内存撑爆。
+#   2. 内存水位守护：MemAvailable 低于阈值时主动优雅重启 majestic，抢在 OOM 之前。
+#   3. majestic.log 轮转，避免长时间运行后无限增长。
+#   4. majestic 异常退出(被 OOM/信号杀) 不再执行 rmmod open_isp —— 那时 VI 中断仍在跑，
+#      卸 ISP 必然 NULL 解引用 panic。改为跳过 clear_isp + 重启 majestic（v6 起连整机
+#      重启也去掉了，见下方 v6 注释）。
+#   （旧 v2 的 safe_reboot() 硬重启整板逻辑已在 v6 移除，见 safe_reboot 函数定义。）
 #
 # v4 修正 v3 的致命回归：监督循环由"600s 有界等待+SIGKILL"改为无限等待 + 健康判定，
 #   否则正常运行的 majestic 每 600s 被误杀一次 -> rc=137 -> 整机重启（每 10 分钟一次）。
+#
+# ★★★ v6 (2026-09-23) 从源头去除"整机重启" ★★★
+#   之前 majestic 任何异常退出(含 WebUI 交互触发的 `majestic -v` 死循环 -> OOM -> rc=137)
+#   都会走到 safe_reboot() 的 `echo b > /proc/sysrq-trigger` 强制重启整块板 —— 即用户
+#   看到的"进 Web 后台点几下就重启 / ping 断断续续"。参考机 219(SSC337, 标准 OpenIPC)
+#   从不因 majestic 不健康而重启主板，自愈完全交给 majestic 内部 watchdog + 监督环重启
+#   majestic 进程。本版据此：safe_reboot() 不再重启整板(只 sync)，监督环任何分支都只
+#   重启 majestic，板子始终在线(SSH/ping/RTSP 可达)。这是与"止血补丁"相反的源头解法。
 #
 # ★ 试过但**不可用**：v2 的 trim_modules() 卸载 IVE/NPU/H265E/JPEGE/VCA/音频/PIRIS 后，
 #   majestic 起来即 `Unable to handle kernel NULL pointer dereference ...
@@ -36,17 +44,18 @@ diag() { echo "$*" >> /tmp/boot_diag.log; }
 # 可用内存(kB)
 memavail() { awk '/MemAvailable/{print $2}' /proc/meminfo 2>/dev/null; }
 
-# 安全重启：先 sync 再 sysrq b。本设备 busybox `reboot -f` 无效(内核 reboot 通路不通)。
+# 安全重启（2026-09-23 v6 重定案）：**不再硬重启整块板**。
+# 历史版本这里 `sync` 后 `echo b > /proc/sysrq-trigger` 强制重启整板。这会把 ANY
+# majestic 抖动（含 WebUI 交互触发的 `majestic -v` 死循环 -> OOM -> rc=137）放大成
+# "整机重启"，即用户看到的"进 Web 后台点几下就重启 / ping 断"。
+# 参考机 219（SSC337，标准 OpenIPC）从不因 majestic 不健康而重启主板，自愈完全交给
+# majestic 内部 watchdog + 监督环重启 majestic 进程。
+# 因此本函数只做 sync，**绝不重启整板**；真正恢复交给 maj_supervise 的重启循环
+# （majestic 退出后自动拉起，板子始终在线）。
 safe_reboot() {
-	say "[!] safe_reboot: sync -> sysrq b"
+	say "[!] safe_reboot: board reboot DISABLED (sync only)"
+	say "[!]   -> supervisor restarts majestic; board stays up (SSH/ping/RTSP reachable)"
 	sync 2>/dev/null
-	echo s > /proc/sysrq-trigger 2>/dev/null   # emergency sync
-	sleep 1
-	sync 2>/dev/null
-	echo b > /proc/sysrq-trigger 2>/dev/null   # immediate reboot
-	sleep 8
-	reboot -f 2>/dev/null                       # 兜底
-	sleep 10
 }
 
 # ---- 0. 基础挂载（带 size 限额，防止 tmpfs 吃光内存）----
@@ -60,7 +69,7 @@ mount -t devpts   devpts /dev/pts  2>/dev/null
 echo /sbin/mdev > /proc/sys/kernel/hotplug 2>/dev/null
 mdev -s 2>/dev/null
 
-say "=== SAZ1051 OpenIPC (NAND) init v4 ==="
+say "=== SAZ1051 OpenIPC (NAND) init v6 (no board reboot) ==="
 say "kernel : $(cat /proc/version)"
 say "cmdline: $(cat /proc/cmdline)"
 say "mem    : MemAvailable=$(memavail)kB"
@@ -173,46 +182,47 @@ if [ -x /usr/bin/majestic ] && [ "$MAJ_WARMUP" = "1" ]; then
 	say "[6] after warm-up lane_mode: $(cat /proc/umap/mipi_rx 2>/dev/null | tr -d ' ' | grep -a 'lane_mode' | tr '\n' ' ')"
 fi
 
-# 监督循环：前台启动 majestic 并 wait，既回收僵尸，又能在它退出后自动重启。
+# 监督循环：前台启动 majestic 并 wait，退出后自动重启。
+# ★★★ 设计铁律(2026-09-23 v6，据参考机 219 重新定案) ★★★
+#   本监督环**绝不重启整块板**。majestic 任何异常(含 OOM/SIGKILL、WebUI 交互抖动)
+#   只会导致"重启 majestic 进程"，板子始终在线(SSH/ping 可达，RTSP 可重连)。
+#   标准 OpenIPC 从不因 majestic 不健康而整机重启，自愈交给 majestic 内部 watchdog
+#   + 这里重启 majestic。之前 safe_reboot() 的 `echo b > sysrq` 整机重启，是重启循环
+#   的唯一来源，已从源头移除（见 safe_reboot 注释）。
 maj_fail=0
 maj_supervise() {
 	while true; do
-		say "[6] starting majestic (foreground of supervisor), MemAvailable=$(memavail)kB"
+		GRACEFUL=0
+		say "[6] starting majestic (supervisor), MemAvailable=$(memavail)kB"
 		rotate_log
 		/usr/bin/majestic -s >> /tmp/majestic.log 2>&1 &
 		MP=$!
-		sleep 14
-		maj_fail=${maj_fail:-0}
+		# 启动期轮询等 :554 最长 60s（冷启动建 VENC + 起 :554 实测 10~20s）。
+		# 不再用固定 sleep 14 后判活 -> 负载高就误判成失败。
+		b=0
+		while [ $b -lt 60 ]; do
+			kill -0 $MP 2>/dev/null || break
+			if netstat -ltn 2>/dev/null | grep -q ':554'; then break; fi
+			b=$((b+1)); sleep 1
+		done
 		if kill -0 $MP 2>/dev/null && netstat -ltn 2>/dev/null | grep -q ':554'; then
 			maj_fail=0
-			say "[6] majestic healthy (pid=$MP, :554 listening)"
+			say "[6] majestic healthy (pid=$MP, :554 listening after ${b}s)"
 		else
 			maj_fail=$((maj_fail+1))
-			say "[6] majestic UNHEALTHY (attempt $maj_fail):"
+			say "[6] majestic not listening after ${b}s (attempt $maj_fail):"
 			tail -8 /tmp/majestic.log 2>/dev/null | while read l; do echo "    | $l"; done
-			if [ "$maj_fail" -ge 2 ]; then
-				say "[6] SDK/ISP not released by in-place restart -> full reboot to recover"
-				sleep 2
-				safe_reboot
+			# ★ 启动失败只重启 majestic，绝不重启整板。连续多次失败也只是持续重试，
+			#   板子始终在线(SSH 可登、串口可看日志)，不会把"起不来"放大成"无限重启"。
+			if [ "$maj_fail" -ge 5 ]; then
+				say "[6] $maj_fail consecutive start failures -> keep retrying (board stays up)"
+				maj_fail=0
 			fi
 		fi
 		say "[6] pid=$(pidof majestic 2>/dev/null || echo none)  rtsp554=$(netstat -ltn 2>/dev/null | grep ':554' || echo none)"
-		if grep -qa 'mipi_vc0_w *:0' /proc/umap/mipi_rx 2>/dev/null; then
-			say "[6] MIPI no data -> replay OS05L10 init table over I2C"
-			[ -x /opt/tools/os05l10_replay.sh ] && /opt/tools/os05l10_replay.sh >> /tmp/sensor_replay.log 2>&1
-			sleep 4
-		fi
-		say "[6] MIPI: $(cat /proc/umap/mipi_rx 2>/dev/null | tr -d ' ' | grep -a 'cil_clk_cur_stat\|mipi_vc0_w\|lane0_data' | tr '\n' ' ')"
-		say "[6] venc timeouts: $(grep -c 'Timeout from venc' /tmp/majestic.log 2>/dev/null)"
-		diag "[6] supervisor check: $(cat /proc/umap/mipi_rx 2>/dev/null | tr -d ' ' | grep -a 'cil_clk_cur_stat\|mipi_vc0_w' | tr '\n' ' ')"
 
-		# ★ 无限等待 + 健康/内存守护。
-		#   ⚠️ 血泪教训(2026-09-22)：这里**不能**用"跑满 N 秒就 SIGKILL"的写法 ——
-		#   majestic 正常运行时进程当然一直活着，600s 一到就被误判成卡死并 SIGKILL，
-		#   rc=137 又被当成异常退出 -> 整机重启，**结果是每 10 分钟准时重启一次**。
-		#   "卡死"只能用健康指标判定：进程在、但 :554 不再监听(连续 3 次采样)。
+		# 无限等待 + 健康/内存守护。
 		w=0
-		mem_hit=0
 		hung=0
 		while true; do
 			kill -0 $MP 2>/dev/null || break
@@ -225,28 +235,28 @@ maj_supervise() {
 				fi
 			fi
 			# 每 15s 查内存水位；低于阈值则优雅重启 majestic（抢在 OOM-kill 之前，
-			# 因为 OOM 后 rmmod open_isp 会 panic）。
+			# 因为 OOM 后 rmmod open_isp 会 panic）。这是 GRACEFUL 重启，VI 已停。
 			if [ $((w % 15)) -eq 0 ]; then
 				ma=$(memavail)
 				if [ -n "$ma" ] && [ "$ma" -lt "$MEM_LOW_KB" ]; then
 					say "[6] LOW MEM ${ma}kB < ${MEM_LOW_KB}kB -> graceful restart majestic"
 					diag "[6] lowmem restart at ${ma}kB"
-					mem_hit=1
+					GRACEFUL=1
 					kill -INT $MP 2>/dev/null
 					sleep 5
 					break
 				fi
 			fi
-			# 每 60s 健康检查：进程还在但 :554 掉了 -> 累计 3 次才判定真卡死
+			# 每 60s 健康检查：仅在 netstat 成功时才计数，避免高负载读不到
+			# /proc/net/tcp 被误判成":554 down"。连续 5 次(=300s)才判定真卡死。
 			if [ $((w % 60)) -eq 0 ]; then
-				if netstat -ltn 2>/dev/null | grep -q ':554'; then
+				if netstat -ltn >/dev/null 2>&1 && netstat -ltn 2>/dev/null | grep -q ':554'; then
 					hung=0
 				else
 					hung=$((hung+1))
-					say "[6] majestic alive but :554 down ($hung/3)"
-					if [ "$hung" -ge 3 ]; then
-						say "[6] majestic HUNG -> SIGKILL"
-						mem_hit=1
+					say "[6] majestic alive but :554 down ($hung/5)"
+					if [ "$hung" -ge 5 ]; then
+						say "[6] majestic HUNG -> SIGKILL + restart (NO board reboot)"
 						kill -9 $MP 2>/dev/null
 						sleep 2
 						break
@@ -256,22 +266,22 @@ maj_supervise() {
 			sleep 1
 		done
 		if kill -0 $MP 2>/dev/null; then
-			mem_hit=1
-			say "[6] majestic still alive after ${w}s -> SIGKILL"
+			say "[6] majestic still alive after ${w}s -> SIGKILL + restart"
 			kill -9 $MP 2>/dev/null
 			sleep 2
 		fi
 		wait $MP 2>/dev/null
 		rc=$?
-		say "[6] majestic exited (rc=$rc, memhit=$mem_hit), MemAvailable=$(memavail)kB"
-		# ★ 异常退出判定：被信号杀(rc>=128，典型 OOM 是 137/SIGKILL) 或 SIGSEGV/超时强杀
-		#   时 VI 中断可能仍在跑 -> 绝不能 rmmod open_isp，否则必然 panic。
-		if [ "$rc" -ge 128 ] 2>/dev/null || [ "$mem_hit" = "1" ]; then
-			say "[6] abnormal/forced exit (rc=$rc) -> skip clear_isp, reboot whole board"
-			diag "[6] abnormal exit rc=$rc -> safe_reboot"
+		say "[6] majestic exited (rc=$rc, graceful=$GRACEFUL), MemAvailable=$(memavail)kB"
+		# ★ 异常/强杀退出(rc>=128 且非我们主动 GRACEFUL SIGINT)：VI/MIPI 中断可能
+		#   仍在跑，绝不能 rmmod open_isp(会 panic)，也绝不重启整板。仅重启 majestic。
+		if [ "$rc" -ge 128 ] 2>/dev/null && [ "$GRACEFUL" != "1" ]; then
+			say "[6] signal-killed (rc=$rc) -> restart majestic only (skip clear_isp, NO board reboot)"
+			diag "[6] signal-killed rc=$rc -> restart majestic (safe_reboot removed)"
 			sleep 2
-			safe_reboot
+			continue
 		fi
+		# 优雅退出(含低内存主动 SIGINT)：VI 已停，可安全 clear_isp 复位 ISP 状态。
 		clear_isp
 		sleep 6
 	done
