@@ -206,6 +206,13 @@ if [ "$1" = "ssw101b-ssc333-tapo-c110" ]; then
 	exit 0
 fi
 
+# SSC333 Tapo C110 v2.6
+if [ "$1" = "atbm6012b-ssc333-tapo-c110" ]; then
+	set_gpio 16 1
+	modprobe atbm6012b_wifi_usb
+	exit 0
+fi
+
 # SSC335DE Uniview C1L-2WN-G
 if [ "$1" = "rtl8188fu-ssc335de-uniview-c1l-2wn-g" ]; then
 	set_gpio 1 0
@@ -307,6 +314,28 @@ fi
 if [ "$1" = "atbm603x-t31-zte-k540" ]; then
 	set_gpio 51 0
 	modprobe atbm603x_wifi_usb
+	exit 0
+fi
+
+# T31 Aoni E97VJ62
+if [ "$1" = "rtl8188fu-t31-aoni-e97vj62" ]; then
+	set_gpio 53 1
+	modprobe 8188fu
+  exit 0
+fi
+
+# SAZ1051 WS73 USB WiFi (vendor driver).
+# $soc on this board is reported by ipcinfo as hi3516cv613 (NOT cv610), so the
+# SoC token in the id MUST be hi3516cv613 or OpenIPC's network.cgi
+# adapter_scan() skips this entry and the WebUI dropdown stays empty.
+# wifi_soc_v15.ko is also installed to /lib/modules/5.10.221 (see
+# saz1051-vendor.mk) so adapter_scan's `find /lib/modules' existence check
+# passes. The real ordered bring-up (muxfix/plat_soc/wifi_soc_v15 + ws73_cfg.ini)
+# is done by /opt/tools/bringup_wifi.sh; the modprobe line below exists only so
+# the WebUI can detect the driver.
+if [ "$1" = "ws73-hi3516cv613-saz1051" ]; then
+	modprobe wifi_soc_v15
+	/opt/tools/bringup_wifi.sh
 	exit 0
 fi
 

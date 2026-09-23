@@ -1,0 +1,8 @@
+#!/bin/sh
+# 2026-09-23: /etc/fw_env.config 已随 rootfs 安装(mtd1 env.bin, size 0x40000)，
+# NAND env 读写打通（U-Boot saveenv/fw_setenv 双向实测）。转发真工具(uboot-tools)。
+# 旧 shim 静默 exit 0 的前提“本 TF 环境无 NAND env 可写”不再成立——官方 WebUI
+# network.cgi 的 SSID/PSK 存储链(fw_setenv wlanssid/wlanpass)依赖真写。
+# load_hisilicon check_allocator() 启动时 fw_setenv mmz_allocator 亦为官方预期
+# 行为(官方板 env 本就可写)，透传即可。
+exec /usr/sbin/fw_setenv "$@"

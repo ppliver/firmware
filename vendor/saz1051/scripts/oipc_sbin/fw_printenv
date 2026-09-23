@@ -1,0 +1,10 @@
+#!/bin/sh
+# 2026-09-23: /etc/fw_env.config 已随 rootfs 安装(mtd1 env.bin, size 0x40000)，
+# NAND env 可读。转发真工具(uboot-tools)。
+# 旧静态 shim 的历史背景(已过时)：
+#   - "DDR 仅 64MB" 是 2026-09-21 的误判，U-Boot 实测 DDR=128MB(0x80)；
+#   - totalmem/osmem 静态 64M/32M 是为了在 env 读不到时给 load_hisilicon 兜底。
+#     真工具下 env 无这两个键 -> 输出空 -> load_hisilicon 兜底行为完全一致，
+#     而 MMZ 布局实际由 v5 推导(cmdline mem= + 固定留 32M)决定，与其无关。
+#   - socmodel 键 env 中不存在 -> 真工具 exit 1，同样跳过 open_svac3e/open_aiisp。
+exec /usr/sbin/fw_printenv "$@"

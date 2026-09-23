@@ -1,0 +1,7 @@
+# vendor/saz1051/gpio/ holds byte-for-byte copies of files taken from the
+# factory firmware dump.  YHTX_HS_IPC_SAZ1051_gpio.json in particular is
+# checksummed against the partition images in backup/
+# (md5 55525a408e71ba0807388c7a3c0dd3d2, 261 B, LF only), so git must not
+# rewrite its line endings on checkout -- with core.autocrlf=true it would
+# otherwise come back as CRLF on Windows and no longer match the dump.
+vendor/saz1051/gpio/* -text

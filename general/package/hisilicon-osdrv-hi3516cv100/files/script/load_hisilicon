@@ -9,7 +9,18 @@ mem_start=0x80000000 # phy mem start
 mem_total=$(fw_printenv -n totalmem | tr -d 'M')
 mem_total=${mem_total:=64}
 
-os_mem_size=$(fw_printenv -n osmem | tr -d 'M')
+# Prefer kernel cmdline mem=NM -- that's the authoritative kernel/MMZ split,
+# but only when it's a strict subset of total RAM. With mmz_allocator=cma
+# (V4 CMA layouts), bootargs typically pass mem=<totalmem> with the MMZ
+# chunk CMA-reserved within that range; in that case mem= is no longer an
+# OS/MMZ split and we must fall through to the U-Boot osmem env.
+os_mem_size=$(awk 'BEGIN{RS=" "} /^mem=[0-9]+M/{gsub(/^mem=|M.*$/,""); print; exit}' /proc/cmdline)
+if [ -n "$os_mem_size" ] && [ "$os_mem_size" -ge "$mem_total" ]; then
+	os_mem_size=""
+fi
+if [ -z "$os_mem_size" ]; then
+	os_mem_size=$(fw_printenv -n osmem | tr -d 'M')
+fi
 os_mem_size=${os_mem_size:=32}
 
 # Sensor config
@@ -37,9 +48,9 @@ insert_detect() {
 }
 
 remove_detect() {
-	rmmod -w ssp_sony &>/dev/null
-	rmmod -w ssp_pana &>/dev/null
-	rmmod -w ssp_ad9020 &>/dev/null
+	rmmod -w open_ssp_sony &>/dev/null
+	rmmod -w open_ssp_pana &>/dev/null
+	rmmod -w open_ssp_ad9020 &>/dev/null
 	rmmod -w hi_i2c
 	rmmod -w hi3518_isp
 	rmmod -w hi3518_sys
@@ -149,9 +160,9 @@ insert_sns() {
 remove_sns() {
 	rmmod -w hi_i2c &>/dev/null
 	rmmod -w ssp &>/dev/null
-	rmmod -w ssp_sony &>/dev/null
-	rmmod -w ssp_pana &>/dev/null
-	rmmod -w ssp_ad9020 &>/dev/null
+	rmmod -w open_ssp_sony &>/dev/null
+	rmmod -w open_ssp_pana &>/dev/null
+	rmmod -w open_ssp_ad9020 &>/dev/null
 }
 
 sys_config() {
@@ -425,6 +436,16 @@ calc_mmz_info
 # Sensor config
 # SENSOR=${SENSOR:=imx307}
 #
+# A failed probe used to be stored as sensor=unknown, and rcS exports the
+# stored value into SENSOR before this ever runs -- so an already-latched
+# camera arrives here with SENSOR=unknown, takes the "set manually" branch
+# below, and never probes again however the real fault is fixed. Treat it
+# as unset and drop it from the environment so this boot re-detects. #2428.
+if [ "$SENSOR" = "unknown" ]; then
+	SENSOR=
+	fw_setenv sensor
+fi
+
 if [ -n "$SENSOR" ]; then
 	logger -s -p daemon.info -t hisilicon "Manualy set SENSOR as ${SENSOR}"
 else
@@ -438,7 +459,15 @@ else
 		export SENSOR=${SENSOR_DETECT:=unknown}
 		remove_detect
 		logger -s -p daemon.info -t hisilicon "Get data from ipcinfo and set SENSOR as ${SENSOR}"
-		fw_setenv sensor $SENSOR && logger -s -p daemon.info -t hisilicon "Write detected ${SENSOR} to U-Boot ENV"
+		# Do not persist a failed detection. The fw_printenv branch above wins
+		# whenever `sensor` exists, so writing "unknown" here latches the camera
+		# into "SENSOR is not detected, aborting..." for good -- detection never
+		# runs again and nothing says why. Seen on a GK7202V500 in #2428.
+		# load_ingenic has always cleared the variable instead of storing the
+		# miss; this is the same behaviour, reached by not writing at all.
+		if [ "$SENSOR" != "unknown" ]; then
+			fw_setenv sensor $SENSOR && logger -s -p daemon.info -t hisilicon "Write detected ${SENSOR} to U-Boot ENV"
+		fi
 	fi
 fi
 

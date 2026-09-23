@@ -1,0 +1,168 @@
+# OpenIPC — SAZ1051 (Hi3516CV610 + OS05L10 + WS73) 128MB SPI-NAND board
+#
+# Forked from hi3516cv6xx_ultimate_defconfig. Differences for this board:
+#   * SOC_MODEL = saz1051  (drives artifact name openipc.saz1051-nand-ultimate.tgz
+#     and the kernel config path board/hi3516cv6xx/saz1051.generic.config)
+#   * NAND rootfs: official hisilicon NAND layout -- SquashFS-on-UBI
+#     (ubinize_hisilicon.cfg: RO squashfs in vol "rootfs" + autoresize
+#     "rootfs_data" for the overlay), geometry for DS35Q1GA
+#     (PEB 128K / LEB 0x1f000 / subpage 2048). The same rootfs.squashfs
+#     (shipped alongside rootfs.ubi by the repack) also deploys raw to a TF
+#     card -- bad NAND blocks on this board make the TF route the fallback.
+#   * Drop hisilicon-opensdk (we ship prebuilt open_*.ko via saz1051-vendor to
+#     preserve the CONFIG_PM=n ABI); add saz1051-vendor for the board blobs.
+#   * Add wpa_supplicant for the WS73 USB WiFi bring-up.
+#   * Drop wireguard (kernel lacks it; saves space on the 128MB board).
+BR2_OPENIPC_SOC_VENDOR="hisilicon"
+BR2_OPENIPC_SOC_MODEL="saz1051"
+BR2_OPENIPC_SOC_FAMILY="hi3516cv6xx"
+# One cv6xx image serves dies that report distinct ids (hi3516cv610,
+# hi3516cv608) via fw_printenv/ipcinfo.
+BR2_OPENIPC_SOC_ALIASES="hi3516cv610 hi3516cv608"
+BR2_OPENIPC_VARIANT="ultimate"
+BR2_OPENIPC_FLASH_SIZE="16"
+
+# Architecture
+BR2_arm=y
+BR2_cortex_a7=y
+BR2_ARM_EABI=y
+BR2_ARM_FPU_NEON_VFPV4=y
+BR2_ARM_INSTRUCTIONS_THUMB2=y
+
+# Toolchain  (musl / gcc13 — matches the proven new5 userspace ABI)
+BR2_TOOLCHAIN_EXTERNAL=y
+BR2_TOOLCHAIN_EXTERNAL_DOWNLOAD=y
+BR2_TOOLCHAIN_EXTERNAL_URL="https://github.com/openipc/firmware/releases/download/$(OPENIPC_TOOLCHAIN).tgz"
+BR2_TOOLCHAIN_EXTERNAL_CUSTOM_PREFIX="arm-openipc-linux-musleabi"
+BR2_TOOLCHAIN_EXTERNAL_HEADERS_5_10=y
+BR2_TOOLCHAIN_EXTERNAL_CUSTOM_MUSL=y
+BR2_GCC_VERSION_13_X=y
+BR2_TOOLCHAIN_EXTERNAL_CXX=y
+
+# Kernel — in-tree hi3516cv610 defconfig (NAND-capable) + saz1051 fragment
+BR2_LINUX_KERNEL=y
+BR2_LINUX_KERNEL_CUSTOM_TARBALL=y
+BR2_LINUX_KERNEL_CUSTOM_TARBALL_LOCATION="https://github.com/openipc/linux/archive/$(OPENIPC_KERNEL).tar.gz"
+BR2_LINUX_KERNEL_USE_CUSTOM_CONFIG=y
+BR2_LINUX_KERNEL_CUSTOM_CONFIG_FILE="$(EXTERNAL_VENDOR)/board/$(OPENIPC_SOC_FAMILY)/$(BR2_OPENIPC_SOC_MODEL).generic.config"
+# Board wiring, kept out of the global all-patches/linux dir so it cannot leak
+# into another board that happens to build this same kernel:
+#   * USB dr_mode stays "otg" (as upstream) but needs host-mode; + init_mode="host"
+#     -> without them wing-usb self-switches to DEVICE, no xHCI host, no VBUS,
+#        and the WS73 module is never enumerated (see the kernel-rebuild skill).
+#   * sdio0 is the TF slot on this board (upstream has it disabled) and gives the
+#     rescue path from Linux; mmc0/sdio1 are unused here.
+#   * drivers/vendor/saz_pm_stub.c exports register_pm_notifier/unregister_pm_notifier,
+#     which CONFIG_PM=n removes but plat_soc.ko (WS73) links against.
+BR2_LINUX_KERNEL_PATCH="$(EXTERNAL_VENDOR)/board/$(OPENIPC_SOC_FAMILY)/saz1051-patches"
+BR2_ROOTFS_POST_IMAGE_SCRIPT="$(EXTERNAL_VENDOR)/board/$(OPENIPC_SOC_FAMILY)/post-image.sh"
+BR2_LINUX_KERNEL_ZIMAGE=y
+BR2_LINUX_KERNEL_XZ=y
+BR2_LINUX_KERNEL_UIMAGE_LOADADDR="0x40018000"
+BR2_LINUX_KERNEL_DTS_SUPPORT=y
+# BR2_LINUX_KERNEL_DTB_IS_SELF_BUILT is not set
+BR2_LINUX_KERNEL_INTREE_DTS_NAME="hi3516cv610-demb"
+
+# Filesystem — 128MB SPI-NAND (DS35Q1GA), official hisilicon NAND layout
+BR2_PACKAGE_BUSYBOX_CONFIG="$(BR2_EXTERNAL)/package/busybox/busybox.config"
+# mtd-utils (ubiformat/ubiupdatevol/nandwrite/...): ubiformat is the only safe
+# primitive for rewriting a UBI MTD (erase counters + image_seq); official
+# hisilicon NAND defconfigs ship it for exactly that reason.
+BR2_PACKAGE_MTD=y
+BR2_PACKAGE_EXFATPROGS=y
+# e2fsprogs: mkfs.ext4/e2fsck for the persistent /etc data area on the TF card
+# (oipc_init [0a] formats the card region past the squashfs once, then mounts
+# it as the overlay upper). mke2fs/mkfs.ext4 are installed unconditionally.
+BR2_PACKAGE_E2FSPROGS=y
+BR2_PACKAGE_UBOOT_TOOLS=y
+BR2_PACKAGE_IPTABLES=y
+BR2_PACKAGE_MOSQUITTO=y
+# Both of the next two default to y, so *omitting* the "# ... is not set" line
+# (very easy to do when a defconfig is copied/rewritten) silently turns them ON.
+# Upstream's cv6xx defconfig disables both; state it explicitly:
+#   * MOSQUITTO_BROKER installs /usr/sbin/mosquitto + mosquitto_pub/sub/rr +
+#     /etc/mosquitto/mosquitto.conf (+141K+103K+40K) and an S50mosquitto init
+#     script that start-stop-daemons the broker at boot. Nothing in this board's
+#     package set depends on libmosquitto (only OpenIPC's mqtt-bot does, and it
+#     is not selected), so the broker is pure weight.
+#   * IFUPDOWN_SCRIPTS drops the /etc/network/if-*.d helpers; this board brings
+#     the network up from oipc_init.sh/bringup_wifi.sh, and oipc_init.sh never
+#     runs /etc/init.d at all.
+# BR2_PACKAGE_IFUPDOWN_SCRIPTS is not set
+# BR2_PACKAGE_MOSQUITTO_BROKER is not set
+# Wireless: WS73 USB WiFi. Vendor cfg80211_v20/mac80211 ko are insmoded by
+# absolute path by bringup_wifi.sh; the in-tree CONFIG_CFG80211/MAC80211=m
+# modules stay unloaded. wpa_supplicant talks nl80211, so it works against the
+# vendor cfg80211 regardless of which .ko provides it.
+BR2_PACKAGE_WPA_SUPPLICANT=y
+# wpa_cli is a SEPARATE option (buildroot installs it to /usr/sbin/wpa_cli only
+# when this is set) and bringup_wifi.sh polls association with
+# `wpa_cli -iwlan0 status | grep -q COMPLETED`, so without it the bring-up can
+# never confirm the link and the script just burns its timeout. Nearly every
+# upstream WiFi defconfig enables this alongside WPA_SUPPLICANT. NL80211 (and
+# its libnl) is default-y, so no explicit entry is needed for the driver.
+BR2_PACKAGE_WPA_SUPPLICANT_CLI=y
+# mbedtls-openipc is NOT optional here: libwebsockets-openipc's .mk does
+# `if BR2_PACKAGE_MBEDTLS_OPENIPC ... -DLWS_WITH_MBEDTLS=ON else ...=OFF`, and
+# with mbedTLS off its CMake falls back to auto-detecting OpenSSL -> configure
+# dies with "Could NOT find OpenSSL (missing: OPENSSL_CRYPTO_LIBRARY
+# OPENSSL_INCLUDE_DIR)". Upstream's cv6xx defconfig gets mbedTLS in transitively
+# via uacme-openipc; we dropped that package, so select it explicitly. This is
+# also the house convention: every upstream WiFi defconfig pairs
+# WPA_SUPPLICANT with MBEDTLS_OPENIPC.
+BR2_PACKAGE_MBEDTLS_OPENIPC=y
+
+# RootFS — official hisilicon NAND recipe (SquashFS-on-UBI), mirrors
+# hi3516ev200_ultimate_defconfig: a read-only squashfs rootfs in UBI volume
+# "rootfs" and a writable autoresize "rootfs_data" volume that holds the
+# overlay (/etc persistence across sysupgrade). Boot side (NAND):
+#   root=/dev/ubiblock0_0 rootfstype=squashfs ubi.block=0,0 ubi.mtd=3,2048
+# Boot side (TF fallback, bad NAND blocks): the same rootfs.squashfs the
+# repack ships, written raw to the card:
+#   root=/dev/mmcblk0 rootfstype=squashfs
+# ubinize CLI options come from the UBI_* settings below (-p/-m/-s);
+# the UBIFS settings stay because buildroot's fs/ubi depends on fs/ubifs.
+BR2_TARGET_ROOTFS_SQUASHFS=y
+BR2_TARGET_ROOTFS_SQUASHFS4_XZ=y
+BR2_TARGET_ROOTFS_UBIFS=y
+BR2_TARGET_ROOTFS_UBIFS_LEBSIZE=0x1f000
+BR2_TARGET_ROOTFS_UBIFS_MINIOSIZE=0x800
+BR2_TARGET_ROOTFS_UBIFS_MAXLEBCNT=760
+# buildroot 2024.02 split the old BR2_TARGET_ROOTFS_UBIFS_COMPRESSION_* names
+# into these "*_RT_*" (run-time) symbols; the older names no longer exist and
+# kconfig silently drops unknown symbols, which left mkfs.ubifs on its default
+# (-x lzo) instead of the zlib the device kernel was validated against.
+BR2_TARGET_ROOTFS_UBIFS_RT_ZLIB=y
+# BR2_TARGET_ROOTFS_UBIFS_RT_LZO is not set
+BR2_TARGET_ROOTFS_UBI=y
+BR2_TARGET_ROOTFS_UBI_PEBSIZE=0x20000
+# sub-page size is an int in Kconfig, not hex -- decimal here (0x800 == 2048)
+BR2_TARGET_ROOTFS_UBI_SUBSIZE=2048
+BR2_TARGET_ROOTFS_UBI_USE_CUSTOM_CONFIG=y
+# Official two-volume cfg: rootfs vol -> BINARIES_DIR/rootfs.squashfs,
+# rootfs_data (2MiB, autoresize). buildroot's fs/ubi.mk seds both
+# BINARIES_DIR and BR2_ROOTFS_UBIFS_PATH inside custom configs.
+BR2_TARGET_ROOTFS_UBI_CUSTOM_CONFIG_FILE="$(BR2_EXTERNAL)/scripts/ubifs/ubinize_hisilicon.cfg"
+
+# Packages
+BR2_PACKAGE_DROPBEAR_OPENIPC=y
+BR2_PACKAGE_HISILICON_OSDRV_HI3516CV6XX=y
+BR2_PACKAGE_IPCTOOL=y
+BR2_PACKAGE_LIBEVENT_OPENIPC=y
+BR2_PACKAGE_LIBOGG_OPENIPC=y
+BR2_PACKAGE_LIBWEBSOCKETS_OPENIPC=y
+BR2_PACKAGE_LIBCURL_OPENIPC_CURL=y
+# BR2_PACKAGE_LIBCURL_OPENIPC_PROXY_SUPPORT is not set
+# BR2_PACKAGE_LIBCURL_OPENIPC_COOKIES_SUPPORT is not set
+# BR2_PACKAGE_LIBCURL_OPENIPC_EXTRA_PROTOCOLS_FEATURES is not set
+BR2_PACKAGE_LAME_OPENIPC=y
+BR2_PACKAGE_OPUS_OPENIPC=y
+BR2_PACKAGE_OPUS_OPENIPC_FIXED_POINT=y
+BR2_PACKAGE_OPUS_OPENIPC_HISI_SHIM=y
+# protobuf-c is dynamically loaded by the cv6xx majestic binary
+BR2_PACKAGE_PROTOBUF_C=y
+BR2_PACKAGE_MAJESTIC=y
+BR2_PACKAGE_MAJESTIC_FONTS=y
+BR2_PACKAGE_MAJESTIC_WEBUI=y
+BR2_PACKAGE_YAML_CLI=y
+BR2_PACKAGE_SAZ1051_VENDOR=y

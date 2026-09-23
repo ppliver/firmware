@@ -1,5 +1,17 @@
 #!/bin/sh
 
+# SAZ1051: raise MMZ to 48M.
+# DDR is 128M; Linux keeps mem=64M (0x40000000-0x44000000). MMZ starts at
+# 0x44000000 and grows upward, so 48M only occupies the previously-unused
+# 0x46000000.. region and does NOT shrink Linux.
+# vendor load_hisilicon uses MMZ_RESERVE_M as the MMZ size
+# (mmz_size = mem_total - os_mem_size = MMZ_RESERVE_M).
+# Default 32M only fits a single 5MP encoder: with the sub stream (or MJPEG)
+# also enabled, the 2880x1620 H264 channel fails with ERR_VENC_NO_MEM and
+# only the 704x576 sub stream comes up -> black RTSP main stream.
+MMZ_RESERVE_M=48
+export MMZ_RESERVE_M
+
 case "$1" in
 	start)
 		echo "Loading vendor modules..."

@@ -1,0 +1,123 @@
+# Managed by majestic. Comments and formatting are removed when settings change
+# via the web UI or API. Only settings that differ from this build's defaults
+# are kept, so a default that changes in a later version still reaches you.
+image:
+  rotate: 0
+# video0 = main stream (sensor native 2880x1620), video1 = sub stream.
+# Sub stream ON so the WebUI preview and /stream=1 work; main stays 5MP.
+video0:
+  fps: 20
+  enabled: true
+  gopSize: "1"
+  size: 2880x1620
+video1:
+  fps: 15
+  size: 704x576
+  enabled: true
+# !!! keep jpeg disabled !!!
+# The MJPEG channel adds a full-resolution encoder that steals MMZ. With
+# jpeg on, even a single H264 stream can fail with ERR_VENC_NO_MEM. Only
+# enable it after MMZ has room (see S70vendor: MMZ_RESERVE_M=48).
+jpeg:
+  enabled: false
+audio:
+  # !!! 本板音频已于 2026-09-23 端到端实测跑通，不要再改回 false !!!
+  # 播放链路: POST /play_audio(8kHz/mono/int16 LE 裸 PCM) -> ADEC(lpcm 透传)
+  #           -> AO(inner/i2s_mas/8kHz/16bit/mono, point_num=320)
+  #           -> I2S DMA(40ms/帧, 640B) -> 片内 codec -> 功放 -> 喇叭
+  # 实测(见 tools/spk_kit.sh / spk_sampler.sh):
+  #   * 推 5 秒单音 -> /proc/umap/adec 的 put_cnt +124 帧(=125 帧的 5 秒)，
+  #     耗时 4~5 秒 = 严格实时，无倍速/拖慢
+  #   * 播放期间 /proc/umap/ao 的 ao chn buf_empty **停止增长**(平时每秒 +25)
+  #     = DMA 一直被喂饱，数据确实送出芯片
+  #   * /root/test.pcm(307432B = 19.2s @8k) -> put_cnt +480 帧, 播 18 秒
+  #   * 推太快会丢帧(缓冲溢出丢弃)，但不会锁死；下一次单推立刻恢复
+  #
+  # ★ 判"真出声"必须看: /proc/umap/adec 的 put_cnt 与 /proc/umap/ao 的
+  #   chn read/write 同步增长；**不能只看 HTTP 返回 200**
+  #   (POST 到任何不存在的路径也返回 200 空体)。
+  #   反例陷阱: 本机 busybox 的 `wget --post-file` 是坏的——它发出
+  #   `Content-Length: 0` 且完全不带 body，看起来 rc=0/200 却什么都没播。
+  #   设备侧请用 tools/spk_play.sh(手工拼请求走 nc)，主机侧用 tools/play_audio.py。
+  #
+  # ★ 前提: 装 majestic 前必须 LD_PRELOAD 补上 SDK 的音频初始化
+  #   (/usr/lib/libmajaudio.so)。闭源 majestic 的 .dynsym 里**没有任何
+  #   ss_mpi_audio_* 符号**，它从不做 ss_mpi_audio_init() 与 6 个
+  #   aenc/adec(aac/mp3/opus)_init()，于是 ss_mpi_adec_create_chn 必报
+  #   ERR_ADEC_NOT_CONFIG("decoder may not be registered")，/play_audio 全废。
+  #   装法见 vendor/saz1051/scripts/patch_s95_majestic.sh。
+  enabled: true
+  outputEnabled: true
+  volume: 30
+  # outputVolume 0-100 映射到 AO 增益: 30 ≈ -41 dB(≈1% 幅度，基本听不见)，
+  # 100 ≈ +6 dB(满幅)。要出声必须给 100。
+  outputVolume: 100
+  # 原厂板级定义 Speaker = 60（另有 Speaker_chn = Right），由原厂 tPlayaudio
+  # 经 sw_gpio_speaker_open 驱动（实测日志 spk_pin=60）。运行时实测
+  # /sys/class/gpio/gpio60 = out/1，/api/v1/gpio 报 {"pin":60,"role":"speaker"}。
+  # 来源见 /etc/gpio/YHTX_HS_IPC_SAZ1051_gpio.json 与 vendor/saz1051/gpio/SOURCE.txt
+  speakerPin: 60
+  # 若功放实为低电平使能(现场听不到声时先试这个)，把它改成 true 即可。
+  speakerPinInvert: false
+  # 注意: /proc/asound/cards 为空、/dev/snd 只有 timer 都是**正常**的——
+  # 本板音频走 MPP(/proc/umap/ao、/proc/umap/adec)，根本不经过 ALSA，
+  # 不能用 asound 的有无来判断音频是否可用。
+watchdog:
+  enabled: false
+hls:
+  enabled: false
+# IR-cut：本板**出厂就没接滤光片线圈**——原厂 gpio.json 里
+# IrCutOpen=-1 / IrCutClose=-1（未配 GPIO），且原厂数据分区启动日志逐项印证
+# "ircut_open:-1, ircut_close:-1"；原厂 tIRCutProc 有完整日夜状态机却从不驱动
+# 滤光片。姊妹机型 SAC1051 才有 (IrCutOpen=63/IrCutClose=8)，两机型板级不同。
+# 所以下面 irCutEnabled 恒为 false，不是"待确定"。
+# !!! 重要教训 (2026-09-23) !!! 0x017940090 / 0x017940094 是 *sensor I2C* 的
+# pad，写 0x1200 会立刻掐断 sensor I2C（os05l10_reg_init failed、VI 无帧、
+# 主/子码流全黑）。切勿照搬原厂样例 opt/sample/ircut/ircut.sh 的这两个地址。
+# 疑似真正的 IR-cut pad = 原厂 muxfix 开机写入的 0x11130000 / 0x11130004
+# （值 0x1200），待后续用可控脉冲+看画面颜色验证后再启用。
+# 红外补光：原厂 gpio.json 的 FillLed.IRLed=9，Enable=1（高电平点亮）。
+# majestic 的这个版本没有独立 irLedPin，"camera light"(=backlightPin) 即夜视补光。
+# 昼夜判定：无光敏/无阈值时 majestic 按曝光自动判(night=快门打满)。
+nightMode:
+  irCutEnabled: false
+  # --- 消除 WebUI 的 "Majestic cannot move the IR-cut filter" 弹窗 ---
+  # 该文案出自 majestic-webui 的 a/ircut-check.js，判据是
+  #   k = ("off" === nightMode.irCut)   → irCut 为 off/false 时不提示
+  #   否则若 irCutPin1 为空 → 弹 "Nothing is connected to the filter..."
+  # 本机 majestic 二进制只认 irCutEnabled，没有 irCut，所以 WebUI 读不到、
+  # 当 "auto" 处理，于是误报。majestic 不校验 yaml 键名，写在下面的未知键
+  # irCut 会被原样透传进 /api/v1/config.json（实测 irCut=false 出现），
+  # WebUI 读到布尔 false 即判为 "off"，提示消失。
+  # 注意 YAML 1.1 里 off == false，所以这里读回来是 false 而不是字符串 "off"，
+  # 而 ircut-check.js 的 i() 恰好把 !1===e 也算 "off"，两种写法都行。
+  # 此键只影响 WebUI 判断，majestic 自身不使用它；IR-cut 引脚在原厂定义里
+  # 就是 -1（未接），见数据分区日志 "ircut_open:-1"。
+  irCut: off
+  backlightEnabled: true
+  # backlightPin = 原厂 FillLed.IRLed（GPIO 9）。实测原厂 tIRCutProc 在
+  # swapp ircut_callback 里 set gpio9:1，与 gpio.json 一致 -> 夜视补光就是它。
+  backlightPin: 9
+  # ---------------------------------------------------------------------------
+  # 本机原厂板级 GPIO 总表
+  #   权威来源 = 原厂 system 分区(YHTX_HS_IPC_SAZ1051_gpio.json，5 份副本
+  #   md5 全同 55525a40…)，并逐项被原厂 swapp 启动日志独立印证：
+  #     sw_gpio_init ... ircut_open:-1, ircut_close:-1, led:9, white:10,
+  #                       red:6, oth:7, speaker:60, rsetkey:61
+  #   运行时实测统计见 tools/mtd12_gpio_scan.py
+  #
+  #   pin  原厂名             majestic 对应              运行时实测
+  #   ---  ----------------  --------------------------  -------------------------
+  #     9  FillLed.IRLed     nightMode.backlightPin  ✅   tIRCutProc 点亮（夜视补光）
+  #    60  Speaker           audio.speakerPin        ✅   tAoCheck 驱动（功放使能，实测有效）
+  #     6  TipsLed.RedLed    无对应项                     LedFlipProc 翻转（红灯）
+  #     7  TipsLed.OthLed    无对应项                     LedFlipProc 高频翻转（状态灯）
+  #    10  FillLed.WhiteLed  无对应项                     原厂从未 set 过
+  #    61  Rsetkey          无对应项（非门铃键）           原厂从未 set 过
+  #    -1  IrCut.Open/Close 无对应项（本板出厂未接线圈）   tIRCutProc 有完整日夜状态机
+  #                                                        却从不驱动滤光片
+  #     0  （json 未定义）    无对应项                     LedFlipProc 驱动过 1 次，用途未知
+  #
+  # 注意：原厂日志区是环形缓冲、会被后续启动覆盖（592 次 sw_gpio_set 只还原出
+  # 323 处），所以上表是"下界"—— 能证明这些被用过，不能证明没有别的。
+  # ---------------------------------------------------------------------------
