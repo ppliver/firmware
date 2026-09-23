@@ -21,20 +21,56 @@ video1:
 jpeg:
   enabled: false
 audio:
-  enabled: false
+  # !!! 本板音频已于 2026-09-23 端到端实测跑通，不要再改回 false !!!
+  # 播放链路: POST /play_audio(8kHz/mono/int16 LE 裸 PCM) -> ADEC(lpcm 透传)
+  #           -> AO(inner/i2s_mas/8kHz/16bit/mono, point_num=320)
+  #           -> I2S DMA(40ms/帧, 640B) -> 片内 codec -> 功放 -> 喇叭
+  # 实测(见 tools/spk_kit.sh / spk_sampler.sh):
+  #   * 推 5 秒单音 -> /proc/umap/adec 的 put_cnt +124 帧(=125 帧的 5 秒)，
+  #     耗时 4~5 秒 = 严格实时，无倍速/拖慢
+  #   * 播放期间 /proc/umap/ao 的 ao chn buf_empty **停止增长**(平时每秒 +25)
+  #     = DMA 一直被喂饱，数据确实送出芯片
+  #   * /root/test.pcm(307432B = 19.2s @8k) -> put_cnt +480 帧, 播 18 秒
+  #   * 推太快会丢帧(缓冲溢出丢弃)，但不会锁死；下一次单推立刻恢复
+  #
+  # ★ 判"真出声"必须看: /proc/umap/adec 的 put_cnt 与 /proc/umap/ao 的
+  #   chn read/write 同步增长；**不能只看 HTTP 返回 200**
+  #   (POST 到任何不存在的路径也返回 200 空体)。
+  #   反例陷阱: 本机 busybox 的 `wget --post-file` 是坏的——它发出
+  #   `Content-Length: 0` 且完全不带 body，看起来 rc=0/200 却什么都没播。
+  #   设备侧请用 tools/spk_play.sh(手工拼请求走 nc)，主机侧用 tools/play_audio.py。
+  #
+  # ★ 前提: 装 majestic 前必须 LD_PRELOAD 补上 SDK 的音频初始化
+  #   (/usr/lib/libmajaudio.so)。闭源 majestic 的 .dynsym 里**没有任何
+  #   ss_mpi_audio_* 符号**，它从不做 ss_mpi_audio_init() 与 6 个
+  #   aenc/adec(aac/mp3/opus)_init()，于是 ss_mpi_adec_create_chn 必报
+  #   ERR_ADEC_NOT_CONFIG("decoder may not be registered")，/play_audio 全废。
+  #   装法见 vendor/saz1051/scripts/patch_s95_majestic.sh。
+  enabled: true
+  outputEnabled: true
   volume: 30
-  outputVolume: 30
+  # outputVolume 0-100 映射到 AO 增益: 30 ≈ -41 dB(≈1% 幅度，基本听不见)，
+  # 100 ≈ +6 dB(满幅)。要出声必须给 100。
+  outputVolume: 100
   # 原厂板级定义 Speaker = 60（另有 Speaker_chn = Right），由原厂 tPlayaudio
-  # 经 sw_gpio_speaker_open 驱动（实测日志 spk_pin=60）。本机当前
-  # /proc/asound/cards 为空（no soundcards），音频链路并没有跑起来，所以这里
-  # 只是把厂商给的功放使能脚记录下来：一旦音频可用，此脚即为正确值。
+  # 经 sw_gpio_speaker_open 驱动（实测日志 spk_pin=60）。运行时实测
+  # /sys/class/gpio/gpio60 = out/1，/api/v1/gpio 报 {"pin":60,"role":"speaker"}。
   # 来源见 /etc/gpio/YHTX_HS_IPC_SAZ1051_gpio.json 与 vendor/saz1051/gpio/SOURCE.txt
   speakerPin: 60
+  # 若功放实为低电平使能(现场听不到声时先试这个)，把它改成 true 即可。
+  speakerPinInvert: false
+  # 注意: /proc/asound/cards 为空、/dev/snd 只有 timer 都是**正常**的——
+  # 本板音频走 MPP(/proc/umap/ao、/proc/umap/adec)，根本不经过 ALSA，
+  # 不能用 asound 的有无来判断音频是否可用。
 watchdog:
   enabled: false
 hls:
   enabled: false
-# IR-cut：本板实物确有滤光片接线，但**正确 GPIO 尚未确定**，暂不启用。
+# IR-cut：本板**出厂就没接滤光片线圈**——原厂 gpio.json 里
+# IrCutOpen=-1 / IrCutClose=-1（未配 GPIO），且原厂数据分区启动日志逐项印证
+# "ircut_open:-1, ircut_close:-1"；原厂 tIRCutProc 有完整日夜状态机却从不驱动
+# 滤光片。姊妹机型 SAC1051 才有 (IrCutOpen=63/IrCutClose=8)，两机型板级不同。
+# 所以下面 irCutEnabled 恒为 false，不是"待确定"。
 # !!! 重要教训 (2026-09-23) !!! 0x017940090 / 0x017940094 是 *sensor I2C* 的
 # pad，写 0x1200 会立刻掐断 sensor I2C（os05l10_reg_init failed、VI 无帧、
 # 主/子码流全黑）。切勿照搬原厂样例 opt/sample/ircut/ircut.sh 的这两个地址。
@@ -73,7 +109,7 @@ nightMode:
   #   pin  原厂名             majestic 对应              运行时实测
   #   ---  ----------------  --------------------------  -------------------------
   #     9  FillLed.IRLed     nightMode.backlightPin  ✅   tIRCutProc 点亮（夜视补光）
-  #    60  Speaker           audio.speakerPin        ✅   tAoCheck 驱动（本机无声卡）
+  #    60  Speaker           audio.speakerPin        ✅   tAoCheck 驱动（功放使能，实测有效）
   #     6  TipsLed.RedLed    无对应项                     LedFlipProc 翻转（红灯）
   #     7  TipsLed.OthLed    无对应项                     LedFlipProc 高频翻转（状态灯）
   #    10  FillLed.WhiteLed  无对应项                     原厂从未 set 过

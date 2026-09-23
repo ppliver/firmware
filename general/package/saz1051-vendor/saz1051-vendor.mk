@@ -16,6 +16,8 @@
 #       -> /opt/saz_wifi, /etc/ws73, /etc/wireless
 #   * board init + bring-up scripts  -> /opt/oipc, /opt/tools
 #   * majestic.yaml                  -> /etc/majestic.yaml
+#   * audio-init LD_PRELOAD shim     -> /usr/lib/libmajaudio.so
+#       + its own S95majestic        -> /etc/init.d/S95majestic
 #
 # MPP userspace .so come from the upstream hisilicon-osdrv-hi3516cv6xx package
 # (selected alongside this one). That package also drops a load_hisilicon in
@@ -146,7 +148,27 @@ define SAZ1051_VENDOR_INSTALL_TARGET_CMDS
 	# open_isp (lane mode persists) so the real S95majestic gets a live link.
 	$(INSTALL) -m 755 -t $(TARGET_DIR)/etc/init.d $(SAZ1051_VENDOR_TREE)/scripts/S94saz_warmup
 
-	# ---- majestic config (validated: video0 only, audio/HLS off) ----
+	# ---- audio init shim (LD_PRELOAD) + the S95 that loads it ----
+	# The vendor majestic binary never calls the SDK's seven audio inits, so
+	# ADEC channel creation fails (ERR_ADEC_NOT_CONFIG) and the speaker is
+	# dead. libmajaudio.so is a libc-free constructor shim that dlopen()s the
+	# two SDK audio libs and runs them. Rationale, evidence, rebuild recipe
+	# and the two verification traps: vendor/saz1051/audio/BUILD.md
+	$(INSTALL) -m 755 -d $(TARGET_DIR)/usr/lib
+	$(INSTALL) -m 644 -t $(TARGET_DIR)/usr/lib \
+		$(SAZ1051_VENDOR_TREE)/audio/libmajaudio.so
+
+	# Overrides the copy the generic `majestic` package installs (this package
+	# depends on it, so generic installs first). Diff vs upstream: the daemon
+	# launch inside start()'s subshell is preceded by an LD_PRELOAD export for
+	# the shim. Upstream's SIGHUP reasoning is preserved verbatim.
+	$(INSTALL) -m 755 -t $(TARGET_DIR)/etc/init.d \
+		$(SAZ1051_VENDOR_TREE)/scripts/S95majestic
+
+	# ---- majestic config ----
+	# audio is ON and validated end to end (see the audio block in
+	# vendor/saz1051/majestic.yaml): outputVolume must be 100, because the
+	# 0-100 -> dB mapping puts 30 at about -41 dB, which is inaudible.
 	$(INSTALL) -m 644 -t $(TARGET_DIR)/etc $(SAZ1051_VENDOR_TREE)/majestic.yaml
 
 	# ---- proven-streaming majestic binary ----
