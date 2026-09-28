@@ -91,6 +91,7 @@ static long sys3(long nr, long a, long b, long c)
 #define O_CREAT  0x40
 #define O_APPEND 0x400
 #define O_RDONLY 0x0
+#define O_RDWR   0x2        /* acodec_cfg 需要读+写模式才能 ioctl */
 
 static int g_log_fd = -1;
 static int g_verbose;
