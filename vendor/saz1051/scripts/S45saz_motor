@@ -1,0 +1,42 @@
+#!/bin/sh
+#
+# S45saz_motor — load the SAZ1051 PTZ motor driver (MiXic MX2208A).
+#
+# The driver registers a misc device named "swmotor" -> /dev/swmotor, which
+# the userspace tool /usr/bin/swmotor_ctl drives via ioctl. It bit-bangs I2C
+# to the MX2208A step-driver IC over GPIO (not a hardware I2C controller) and
+# uses vendor,timer23 (irq 49) for the step clock.
+#
+# Factory-confirmed GPIO defaults (from the .ko .data section + a live insmod
+# on 2026-09-24): en=63 data=13 clk=12 rst=8, m_timer_counts=3000. Those are
+# the module's built-in defaults, so a bare insmod is the proven path (the
+# original factory start_swapp.sh also insmods with no args). The explicit
+# params are recorded here only as documentation of intent.
+#
+# Runs early (S45, before S70vendor loads the MPP/sensor stack) so the motor
+# device is present well before any WebUI/PTZ control is used.
+
+KO=/lib/modules/5.10.221/motor_mx2208a.ko
+
+start() {
+	if [ ! -e /dev/swmotor ] && [ -f "$KO" ]; then
+		insmod "$KO" \
+			gpio_motor_en=63 gpio_motor_data=13 \
+			gpio_motor_clk=12 gpio_motor_rst=8 2>/dev/null \
+			|| insmod "$KO" 2>/dev/null
+		# misc device node is created by mdev on the uevent; cold-plug it.
+		mdev -s 2>/dev/null
+	fi
+}
+
+stop() {
+	# Leave the module loaded across stop; a real unload would drop PTZ until
+	# the next boot. Nothing to do here.
+	:
+}
+
+case "$1" in
+	start) start ;;
+	stop)  stop ;;
+	*) echo "Usage: $0 {start|stop}" ;;
+esac

@@ -152,11 +152,15 @@ define SAZ1051_VENDOR_INSTALL_TARGET_CMDS
 	# The vendor majestic binary never calls the SDK's seven audio inits, so
 	# ADEC channel creation fails (ERR_ADEC_NOT_CONFIG) and the speaker is
 	# dead. libmajaudio.so is a libc-free constructor shim that dlopen()s the
-	# two SDK audio libs and runs them. Rationale, evidence, rebuild recipe
-	# and the two verification traps: vendor/saz1051/audio/BUILD.md
+	# two SDK audio libs, runs the seven inits, AND configures /dev/acodec
+	# (mic input path + speaker DAC output) — without the acodec ioctls the
+	# microphone fails with ERR_AI_NOT_CONFIG. The .so is BUILT FROM SOURCE
+	# by SAZ1051_VENDOR_BUILD_CMDS (TARGET_CC), not shipped prebuilt, so the
+	# acodec fix in audio_shim.c is always compiled against the target.
+	# Rationale, evidence, rebuild recipe: vendor/saz1051/audio/BUILD.md
 	$(INSTALL) -m 755 -d $(TARGET_DIR)/usr/lib
 	$(INSTALL) -m 644 -t $(TARGET_DIR)/usr/lib \
-		$(SAZ1051_VENDOR_TREE)/audio/libmajaudio.so
+		$(@D)/libmajaudio.so
 
 	# Overrides the copy the generic `majestic` package installs (this package
 	# depends on it, so generic installs first). Diff vs upstream: the daemon
@@ -170,6 +174,25 @@ define SAZ1051_VENDOR_INSTALL_TARGET_CMDS
 	# vendor/saz1051/majestic.yaml): outputVolume must be 100, because the
 	# 0-100 -> dB mapping puts 30 at about -41 dB, which is inaudible.
 	$(INSTALL) -m 644 -t $(TARGET_DIR)/etc $(SAZ1051_VENDOR_TREE)/majestic.yaml
+
+	# ---- PTZ motor driver (MiXic MX2208A, misc device /dev/swmotor) ----
+	# Vendor ko, vermagic 5.10.221 (matches the running OpenIPC kernel ABI),
+	# GPIO defaults confirmed from the .ko .data section + live insmod
+	# (en=63 data=13 clk=12 rst=8). Loaded by S45saz_motor with those
+	# defaults. Userspace control: /usr/bin/swmotor_ctl (built from source)
+	# drives /dev/swmotor via ioctl; /var/www/cgi-bin/ptz.cgi is a WebUI panel.
+	# See vendor/saz1051/ptz/README.md for the cmd->direction mapping note.
+	$(INSTALL) -m 755 -d $(TARGET_DIR)/lib/modules/5.10.221
+	$(INSTALL) -m 644 -t $(TARGET_DIR)/lib/modules/5.10.221 \
+		$(SAZ1051_VENDOR_TREE)/motor/motor_mx2208a.ko
+	$(INSTALL) -m 755 -t $(TARGET_DIR)/etc/init.d \
+		$(SAZ1051_VENDOR_TREE)/scripts/S45saz_motor
+
+	# PTZ control tool (built from source in BUILD_CMDS) + WebUI CGI
+	$(INSTALL) -m 755 -t $(TARGET_DIR)/usr/bin $(@D)/swmotor_ctl
+	$(INSTALL) -m 755 -d $(TARGET_DIR)/var/www/cgi-bin
+	$(INSTALL) -m 755 -t $(TARGET_DIR)/var/www/cgi-bin \
+		$(SAZ1051_VENDOR_TREE)/ptz/ptz.cgi
 
 	# ---- proven-streaming majestic binary ----
 	# The prebuilt vendor majestic (in this tree) is the binary that has been
@@ -187,6 +210,22 @@ define SAZ1051_VENDOR_INSTALL_TARGET_CMDS
 	# reliably on Windows checkouts).
 	sh $(SAZ1051_VENDOR_TREE)/scripts/patch_webui.sh $(TARGET_DIR)
 
+endef
+
+# Both binaries are compiled for the target here (no prebuilt blobs), so the
+# acodec fix (audio_shim.c) and the PTZ tool always track the source.
+define SAZ1051_VENDOR_BUILD_CMDS
+	# libmajaudio.so: libc-free LD_PRELOAD shim (-nostdlib, only raw syscalls
+	# + dlopen/dlsym resolved from majestic's own libc at load time). Build in
+	# ARM mode (-marm) to match the proven prebuilt (its inline-asm svc0 +
+	# register-asm clobbers are most stable in ARM state).
+	$(TARGET_CC) -shared -fPIC -nostdlib -fno-stack-protector -fno-builtin \
+		-fno-unwind-tables -fno-asynchronous-unwind-tables -marm \
+		$(TARGET_CFLAGS) -o $(@D)/libmajaudio.so \
+		$(SAZ1051_VENDOR_TREE)/audio/audio_shim.c
+	# swmotor_ctl: normal libc program (links musl normally).
+	$(TARGET_CC) $(TARGET_CFLAGS) -o $(@D)/swmotor_ctl \
+		$(SAZ1051_VENDOR_TREE)/ptz/swmotor_ctl.c
 endef
 
 # Installed last so it overrides OpenIPC's from-source majestic binary and the

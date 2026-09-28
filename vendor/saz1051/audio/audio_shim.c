@@ -44,7 +44,7 @@
  *       -march=armv7-a -marm -o libmajaudio.so audio_shim.c
  */
 
-#define VER_TAG "v5"
+#define VER_TAG "v6"
 
 #define SO_AUDIO "libss_mpi_audio.so"
 #define SO_ADP   "libss_mpi_audio_adp.so"
@@ -85,6 +85,7 @@ static long sys3(long nr, long a, long b, long c)
 #define NR_CLOSE  6
 #define NR_READ   3
 #define NR_GETPID 20
+#define NR_IOCTL 54
 
 #define O_WRONLY 0x1
 #define O_CREAT  0x40
@@ -185,6 +186,78 @@ static int is_majestic(void)
         }
     }
     return 0;
+}
+
+/* ---- ACODEC 配置（麦克风输入 + 喇叭输出的根因修复）----------------------
+ * Hi3516CV610 SDK 的 sample_comm_audio.c::sample_inner_codec_cfg_audio() 在
+ * ss_mpi_ai_set_pub_attr() 之前必须对 /dev/acodec 做一组 ioctl：
+ *   SOFT_RESET -> SET_I2S1_FS -> SET_MIXER_MIC -> SET_INPUT_VOLUME
+ * 闭源 majestic 从不做这一步，于是 AI 报 ERR_AI_NOT_CONFIG（麦克风不可用）。
+ * 这里照搬这 4 个 ioctl；并在其后补喇叭 DAC 输出（音量 + 取消左右声道静音），
+ * 确保 AO 路径真正出声（GPIO 60 功放使能已由 majestic 经 S95majestic 拉高）。
+ *
+ * 海思内置 ACODEC 走私有字符设备 /dev/acodec（不走 ALSA），ioctl 魔数由
+ * ARM _IOC(type='A',nr,size) 算出（与 SDK ot_acodec.h 交叉核对）：
+ *   SOFT_RESET     _IO( 'A',0)        = 0x00004100
+ *   SET_I2S1_FS    _IOWR('A',1,u32)   = 0xc0044101
+ *   SET_MIXER_MIC  _IOWR('A',2,u32)   = 0xc0044102
+ *   SET_INPUT_VOL  _IOWR('A',3,u32)   = 0xc0044103
+ *   SET_OUTPUT_VOL _IOWR('A',4,u32)   = 0xc0044104
+ *   SET_DACL_MUTE  _IOWR('A',0x1a,u32)= 0xc004411a  (arg 0=unmute)
+ *   SET_DACR_MUTE  _IOWR('A',0x1b,u32)= 0xc004411b  (arg 0=unmute)
+ * 注：本板 Speaker 走 Right 声道，所以只解 DACR 静音也够；两只都解最稳。
+ */
+#define ACODEC_DEV "/dev/acodec"
+
+#define ACODEC_SOFT_RESET     0x00004100
+#define ACODEC_SET_I2S1_FS    0xc0044101
+#define ACODEC_SET_MIXER_MIC  0xc0044102
+#define ACODEC_SET_INPUT_VOL  0xc0044103
+#define ACODEC_SET_OUTPUT_VOL 0xc0044104
+#define ACODEC_SET_DACL_MUTE  0xc004411a
+#define ACODEC_SET_DACR_MUTE  0xc004411b
+
+static long sys_ioctl(long fd, long req, long arg)
+{
+    return sys3(NR_IOCTL, fd, req, arg);
+}
+
+static void acodec_cfg(void)
+{
+    long fd, rc;
+    int v_fs      = 0x1;       /* OT_ACODEC_FS_8000（与 majestic audio 默认 8k 对齐） */
+    int v_in_mod  = 0x2;       /* OT_ACODEC_MIXER_IN_D（伪差分，原厂板型） */
+    int v_in_vol  = 30;        /* 输入音量 30 dB（SDK 推荐 20~50，模拟+数字增益） */
+    int v_out_vol = 0x30;      /* 输出音量 0x00~0x7e（0x7f=mute），避免静音默认值 */
+    int v_unmute  = 0;         /* 0 = unmute */
+
+    fd = sys3(NR_OPEN, (long)ACODEC_DEV, O_RDWR, 0);
+    if (fd < 0) {
+        emit("[majaudio] acodec: open " ACODEC_DEV
+             " FAILED (ot_acodec.ko loaded?)\n");
+        return;
+    }
+    /* 1) soft reset 到默认态 */
+    rc = sys_ioctl(fd, ACODEC_SOFT_RESET, 0);
+    if (rc != 0 && g_verbose) {
+        emit("[majaudio] acodec SOFT_RESET rc=");
+        emit_dec(rc);
+        emit("\n");
+    }
+    /* 2) I2S1 采样率 = 8k */
+    sys_ioctl(fd, ACODEC_SET_I2S1_FS, (long)&v_fs);
+    /* 3) 麦克风输入模式 = 伪差分 IN_D */
+    sys_ioctl(fd, ACODEC_SET_MIXER_MIC, (long)&v_in_mod);
+    /* 4) 麦克风输入音量 = 30 dB（ERR_AI_NOT_CONFIG 的根因就在这组配置缺失） */
+    sys_ioctl(fd, ACODEC_SET_INPUT_VOL, (long)&v_in_vol);
+    /* 5) 喇叭输出音量（避免静音默认值导致"软件出帧但无声音"） */
+    sys_ioctl(fd, ACODEC_SET_OUTPUT_VOL, (long)&v_out_vol);
+    /* 6) 取消左右 DAC 静音（本板 Speaker=Right 声道） */
+    sys_ioctl(fd, ACODEC_SET_DACL_MUTE, (long)&v_unmute);
+    sys_ioctl(fd, ACODEC_SET_DACR_MUTE, (long)&v_unmute);
+
+    sys3(NR_CLOSE, fd, 0, 0);
+    emit("[majaudio] acodec cfg done\n");
 }
 
 /* ---- 待补的 7 步 ------------------------------------------------------ */
@@ -288,6 +361,10 @@ static void majaudio_init(void)
             emit("\n");
         }
     }
+
+    /* 7 步 SDK 音频初始化之后，必须对 /dev/acodec 做输入/输出配置，否则
+     * AI 报 ERR_AI_NOT_CONFIG、AO 静音。这一步是麦克风/喇叭可用的根因修复。 */
+    acodec_cfg();
 
     emit("[majaudio] " VER_TAG " pid=");
     emit_dec(sys3(NR_GETPID, 0, 0, 0));

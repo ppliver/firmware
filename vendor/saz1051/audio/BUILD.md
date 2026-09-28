@@ -42,7 +42,16 @@ constructor:
    `dlopen("libss_mpi_audio_adp.so", RTLD_NOW|RTLD_GLOBAL)`, falling back to
    the `/usr/lib/` absolute paths;
 3. `dlsym()` + calls the seven inits, then appends one summary line to
-   `/tmp/majaudio.log`.
+   `/tmp/majaudio.log`;
+4. **configures the HiSilicon inner ACODEC** (`/dev/acodec`) — this is the
+   missing half for the **microphone**. Even after the seven inits,
+   `ss_mpi_ai_set_pub_attr()` still fails with `ERR_AI_NOT_CONFIG` unless the
+   codec's input path is set up first. `acodec_cfg()` replays the four ioctls
+   from the SDK's `sample_inner_codec_cfg_audio()` — `SOFT_RESET` →
+   `SET_I2S1_FS(8k)` → `SET_MIXER_MIC(IN_D)` → `SET_INPUT_VOLUME(30)` — and
+   then sets the speaker output (`SET_OUTPUT_VOLUME` + unmute both DAC
+   channels) so the AO path actually emits. See the ioctl magic numbers in
+   `audio_shim.c` (computed from `ot_acodec.h`, type `'A'`).
 
 **Why `dlopen`+`dlsym` and not plain weak externs:** the first revision
 declared the seven functions as `weak extern` and read **all seven as 0** —
@@ -61,20 +70,26 @@ already-loaded instance). Measured: 7/7 `rc=0`, and majestic's log then shows
 
 | file | purpose |
 |---|---|
-| `audio_shim.c` | source (version tag `v5`, raw `svc 0` syscalls only) |
-| `libmajaudio.so` | prebuilt for the target, md5 `7f61e3c766a59cd526e30ab0ca0fa4ea` |
+| `audio_shim.c` | source (version tag `v6`, raw `svc 0` syscalls only) |
 | `dynsym_dump.py` | the tool used to prove the missing symbols; also dumps `DT_NEEDED` |
 
-Installed to `/usr/lib/libmajaudio.so`; `vendor/saz1051/scripts/S95majestic`
-preloads it (see the comment block inside `start()`).
+`libmajaudio.so` is **no longer shipped prebuilt** — it is compiled from
+`audio_shim.c` by `saz1051-vendor`'s `BUILD_CMDS` (`$(TARGET_CC)`, the
+OpenIPC musl cross toolchain) during the firmware build, then installed to
+`/usr/lib/libmajaudio.so`. `vendor/saz1051/scripts/S95majestic` preloads it
+(see the comment block inside `start()`).
 
-## Rebuild (only needed if audio_shim.c changes)
+## Rebuild
 
-Cross-compiler lives on the Ubuntu builder (`192.168.219.177`), tool
-`arm-linux-gnueabihf-gcc` 9.5.0 in `/usr/local/bin`:
+The `.so` is rebuilt automatically as part of the OpenIPC firmware build
+(`saz1051-vendor` package → `SAZ1051_VENDOR_BUILD_CMDS`), so a normal
+`make` already produces it from the current `audio_shim.c`. To rebuild it by
+hand against the same toolchain:
 
 ```sh
-arm-linux-gnueabihf-gcc -shared -nostdlib -fPIC \
+# OpenIPC musl cross toolchain (arm-openipc-linux-musleabi-gcc), or the
+# Ubuntu builder's arm-linux-gnueabihf-gcc as a fallback:
+$(TARGET_CC) -shared -nostdlib -fPIC \
     -fno-stack-protector -fno-builtin \
     -fno-unwind-tables -fno-asynchronous-unwind-tables \
     -march=armv7-a -marm -o libmajaudio.so audio_shim.c
@@ -84,10 +99,10 @@ arm-linux-gnueabihf-gcc -shared -nostdlib -fPIC \
 the device's musl runtime without pulling anything in, and the two
 `__aeabi_unwind_cpp_pr*` stubs in the source satisfy the ARM EABI exidx
 references that would otherwise need libgcc. Bump `VER_TAG` in the source and
-keep `libmajaudio.so` in step with it — the log line is the only way to tell
-which build is loaded (`[majaudio] v5 pid=NNN 7/7 ok`).
+keep the build in step with it — the log line is the only way to tell which
+build is loaded (`[majaudio] v6 pid=NNN 7/7 ok` then `acodec cfg done`).
 
-## Verified on device (2026-09-23)
+## Verified on device (2026-09-23, speaker playback path)
 
 ```
 [gpio]   set_gpio(60, 1)                       -> /sys/class/gpio/gpio60 = 1
@@ -109,6 +124,17 @@ samples genuinely left the SoC. Pushing far faster than real time overflows
 the buffer and **drops** frames (250 pushed → 129 played), but does not wedge
 the queue: the next single push plays normally.
 
+### ⚠️ Not yet confirmed audible (pending real-device test on OpenIPC)
+- **Speaker**: the GPIO-60 PA enable + AO/DMA path are verified at the counter
+  level, and v6 now also programs the inner codec output volume + unmute. The
+  actual sound pressure at the speaker still needs a human ear on OpenIPC
+  (the 2026-09-23 test ran on the *vendor* firmware; the OpenIPC shim path is
+  new in v6).
+- **Microphone**: the `acodec_cfg()` input-path ioctls are taken verbatim from
+  the SDK sample that the vendor firmware uses, so `ERR_AI_NOT_CONFIG` should
+  clear — but bidirectionat capture / `GET /audio.pcm` has not been exercised
+  on OpenIPC yet. Verify with `GET /audio.pcm` after this build boots.
+
 ## Two traps worth remembering
 
 1. **`/proc/asound/cards` being empty means nothing here.** This board plays
@@ -126,11 +152,10 @@ the queue: the next single push plays normally.
 
 ## Known cosmetic issue
 
-`/tmp/majaudio.log` also carries a `[majaudio] v5 pid=N 0/7 FAIL ...` block
+`/tmp/majaudio.log` also carries a `[majaudio] v6 pid=N 0/7 FAIL ...` block
 from one auxiliary process besides the daemon's `7/7 ok`. That process
 inherits `LD_PRELOAD` and has `majestic` in its cmdline (so the gate lets it
 through) but cannot `dlopen` the audio libs, and its failures are harmless —
 the daemon itself reports `7/7 ok`. Tightening the gate to require the
 cmdline to *begin with* `majestic` would silence it; it is left alone because
-`audio_shim.c` and the shipped `libmajaudio.so` are currently in step and the
-device is verified working.
+`audio_shim.c` and the built `libmajaudio.so` are currently in step.
