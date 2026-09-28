@@ -113,6 +113,30 @@ if [ -b /dev/mmcblk0 ]; then
 		fi
 	fi
 fi
+# ---- 0a-NAND. NAND UBI 持久化路线（无需 TF 卡，官方 hisilicon rootfs_data 设计）----
+# ubinize_hisilicon.cfg 预留 UBI 第 2 卷 (ubi0:rootfs_data, ubifs, autoresize) 正是给
+# "持久化 /etc"：官方 init 把它 mount 成 /overlay 作整根 overlay 的 upper。本板启动链
+# 是 PID1=oipc_init.sh（无 pivot_root），故不做整根 overlay，只把 /etc 提到同一 ubi
+# upper 层：bind 工厂只读 /etc 为 lower，ubi 卷作 upper。/etc/shadow、WebUI token、
+# TZ、interfaces 全落 NAND，重启不丢。优先级：TF 卡路线 > 本 UBI 路线 > tmpfs 兜底。
+if [ -z "$etc_persisted" ] && [ -e /dev/ubi0 ] && [ -d /overlay ]; then
+	if mount -t ubifs ubi0:rootfs_data /overlay 2>/dev/null; then
+		mkdir -p /overlay/etc /overlay/.work 2>/dev/null
+		# 首启：把出厂 /etc 拷进持久层（此后持久层接管，改 /etc 都落 ubi）。
+		[ -n "$(ls -A /overlay/etc 2>/dev/null)" ] || cp -a /etc/. /overlay/etc/ 2>/dev/null
+		if mount --bind /etc /overlay/.lower 2>/dev/null &&
+			mount -t overlay overlay \
+				-o lowerdir=/overlay/.lower,upperdir=/overlay/etc,workdir=/overlay/.work \
+				/etc 2>/dev/null; then
+			etc_persisted=1
+			say "[0a] /etc -> overlay persistent (ubi ubi0:rootfs_data) OK, entries=$(ls /etc 2>/dev/null | wc -l)"
+		else
+			say "[0a] !! /etc ubi overlay FAILED -> fall through to tmpfs (volatile!)"
+			umount /etc 2>/dev/null
+			umount /overlay 2>/dev/null
+		fi
+	fi
+fi
 if [ -z "$etc_persisted" ]; then
 	if ! touch /etc/.rwtest 2>/dev/null; then
 		mkdir -p /tmp/.etc_ro
@@ -157,6 +181,25 @@ say "[1] /dev/ot_mipi_rx: $(ls -la /dev/ot_mipi_rx 2>&1 | tr '\n' ' ')"
 if [ -x /opt/tools/sensor_mux.sh ]; then
 	say "[2] sensor_mux.sh"
 	/opt/tools/sensor_mux.sh 2>&1 | while read l; do echo "    | $l"; done
+fi
+
+# ---- 2a. PTZ 云台 motor（MiXic MX2208A, misc /dev/swmotor）----
+# 设备 node 由 misc device 生成（mdev -s）。GPIO 默认 en=63 data=13 clk=12 rst=8
+# 来自 .ko .data 段 + 2026-09-24 实况 insmod 验证，见 vendor/saz1051/ptz/README.md。
+# 本脚本是 PID1（init=/opt/oipc/oipc_init.sh），根本不跑 /etc/init.d，故 S45saz_motor
+# 不会执行；把它的加载逻辑搬到这里（裸 insmod 兜底，与原厂 start_swapp.sh 一致）。
+# 若 /lib/modules/.../motor_mx2208a.ko 缺失或加载失败，不影响出图/音频（PTZ 静默不可用）。
+MOTOR_KO=/lib/modules/5.10.221/motor_mx2208a.ko
+if [ -f "$MOTOR_KO" ]; then
+	if [ ! -e /dev/swmotor ]; then
+		insmod "$MOTOR_KO" gpio_motor_en=63 gpio_motor_data=13 \
+			gpio_motor_clk=12 gpio_motor_rst=8 2>/dev/null \
+			|| insmod "$MOTOR_KO" 2>/dev/null
+		mdev -s 2>/dev/null
+	fi
+	say "[2a] swmotor: $(ls -la /dev/swmotor 2>&1 | tr '\n' ' ')"
+else
+	say "[2a] PTZ motor ko MISSING ($MOTOR_KO) — PTZ disabled"
 fi
 
 # ---- 3. WiFi（后台，不阻塞启动）----
