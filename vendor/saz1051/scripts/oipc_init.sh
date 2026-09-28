@@ -206,6 +206,13 @@ say "[5b] mipi rw-open ready (tries=${n})"
 #   退出并 wait 回收; 第二次启动时 ioctl 即可成功 unpark, MIPI 出数据。
 export SENSOR=os05l10
 
+# ★ 音频垫片(2026-09-28 修复回归)：必须 LD_PRELOAD 挂 /usr/lib/libmajaudio.so，否则
+#   majestic 缺 ss_mpi_audio_* 符号 -> acodec 配置失败 / ADEC 报 ERR_ADEC_NOT_CONFIG，
+#   麦克风与喇叭全废。注意 init=/opt/oipc/oipc_init.sh 启动链根本不跑 S95majestic，
+#   所以这里直接给 majestic 的两个启动点加 LD_PRELOAD（warm-up 与 supervisor 都要）。
+MAJ_PRELOAD=""
+[ -r /usr/lib/libmajaudio.so ] && MAJ_PRELOAD="/usr/lib/libmajaudio.so"
+
 # 清掉 open_isp 的 "ISP[0] already inited" 状态（仅在 majestic 已优雅停止时调用）。
 # ★ 危险边界：若 majestic 是被 OOM/信号杀掉的，VI/MIPI 中断仍在产生，此时 rmmod open_isp
 #   会让中断上下文访问已失效对象 -> NULL 解引用 -> Kernel panic。
@@ -233,7 +240,7 @@ rotate_log() {
 if [ -x /usr/bin/majestic ] && [ "$MAJ_WARMUP" = "1" ]; then
 	say "[6] majestic warm-up run (目的: 设 MIPI lane mode)"
 	: > /tmp/majestic.log
-	/usr/bin/majestic -s >> /tmp/majestic.log 2>&1 &
+	${MAJ_PRELOAD:+LD_PRELOAD="$MAJ_PRELOAD"} /usr/bin/majestic -s >> /tmp/majestic.log 2>&1 &
 	WARM=$!
 	# ★ "见好就收": 一旦 SET_DEV_ATTR 落地(lane mode 写进 open_mipi_rx)就立刻退出。
 	n=0
@@ -266,7 +273,7 @@ maj_supervise() {
 		GRACEFUL=0
 		say "[6] starting majestic (supervisor), MemAvailable=$(memavail)kB"
 		rotate_log
-		/usr/bin/majestic -s >> /tmp/majestic.log 2>&1 &
+		${MAJ_PRELOAD:+LD_PRELOAD="$MAJ_PRELOAD"} /usr/bin/majestic -s >> /tmp/majestic.log 2>&1 &
 		MP=$!
 		# 启动期轮询等 :554 最长 60s（冷启动建 VENC + 起 :554 实测 10~20s）。
 		# 不再用固定 sleep 14 后判活 -> 负载高就误判成失败。

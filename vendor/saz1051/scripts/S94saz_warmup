@@ -20,7 +20,9 @@ case "$1" in
 		fi
 		echo "S94: MIPI lane-mode warm-up start"
 		: > /tmp/majestic.log
-		/usr/bin/majestic -s >> /tmp/majestic.log 2>&1 &
+		MAJ_PRELOAD=""
+		[ -r /usr/lib/libmajaudio.so ] && MAJ_PRELOAD="/usr/lib/libmajaudio.so"
+		${MAJ_PRELOAD:+LD_PRELOAD="$MAJ_PRELOAD"} /usr/bin/majestic -s >> /tmp/majestic.log 2>&1 &
 		WARM=$!
 		n=0
 		while [ $n -lt 80 ]; do

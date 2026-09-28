@@ -23,7 +23,10 @@ os_mem_size=${os_mem_size:=32}
 # 于是 mmz_size=64-os_mem 被同步压小，大 mem 直接 ERR_VENC_NO_MEM。
 # 本板 DDR 实测 128M（U-Boot: DDR size: 0x00000080），旧逻辑只用了 64M。
 _cm_mem=$(awk 'BEGIN{RS=" "} /^mem=[0-9]+M/{gsub(/^mem=|M.*$/,""); print; exit}' /proc/cmdline)
-MMZ_RESERVE_M=${MMZ_RESERVE_M:-32}
+# [SAZ1051] 默认 48M：32M 只够单路 5MP，开子码流/主码流就 ERR_VENC_NO_MEM
+# （2026-09-28 实测：主码流 2880x1620 VENC 通道创建失败 ERR_VENC_NO_MEM，子码流 704x576 正常）。
+# 9-23 跑通版即 mem=64M + MMZ_RESERVE_M=48。
+MMZ_RESERVE_M=${MMZ_RESERVE_M:-48}
 if [ -n "$_cm_mem" ]; then
 	os_mem_size=$_cm_mem
 	mem_total=$(( os_mem_size + MMZ_RESERVE_M ))
