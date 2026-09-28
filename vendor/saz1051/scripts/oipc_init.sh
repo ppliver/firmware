@@ -240,7 +240,11 @@ rotate_log() {
 if [ -x /usr/bin/majestic ] && [ "$MAJ_WARMUP" = "1" ]; then
 	say "[6] majestic warm-up run (目的: 设 MIPI lane mode)"
 	: > /tmp/majestic.log
-	${MAJ_PRELOAD:+LD_PRELOAD="$MAJ_PRELOAD"} /usr/bin/majestic -s >> /tmp/majestic.log 2>&1 &
+	if [ -n "$MAJ_PRELOAD" ]; then
+		env LD_PRELOAD="$MAJ_PRELOAD" /usr/bin/majestic -s >> /tmp/majestic.log 2>&1 &
+	else
+		/usr/bin/majestic -s >> /tmp/majestic.log 2>&1 &
+	fi
 	WARM=$!
 	# ★ "见好就收": 一旦 SET_DEV_ATTR 落地(lane mode 写进 open_mipi_rx)就立刻退出。
 	n=0
@@ -273,7 +277,11 @@ maj_supervise() {
 		GRACEFUL=0
 		say "[6] starting majestic (supervisor), MemAvailable=$(memavail)kB"
 		rotate_log
-		${MAJ_PRELOAD:+LD_PRELOAD="$MAJ_PRELOAD"} /usr/bin/majestic -s >> /tmp/majestic.log 2>&1 &
+		if [ -n "$MAJ_PRELOAD" ]; then
+			env LD_PRELOAD="$MAJ_PRELOAD" /usr/bin/majestic -s >> /tmp/majestic.log 2>&1 &
+		else
+			/usr/bin/majestic -s >> /tmp/majestic.log 2>&1 &
+		fi
 		MP=$!
 		# 启动期轮询等 :554 最长 60s（冷启动建 VENC + 起 :554 实测 10~20s）。
 		# 不再用固定 sleep 14 后判活 -> 负载高就误判成失败。

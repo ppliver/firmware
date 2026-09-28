@@ -22,7 +22,11 @@ case "$1" in
 		: > /tmp/majestic.log
 		MAJ_PRELOAD=""
 		[ -r /usr/lib/libmajaudio.so ] && MAJ_PRELOAD="/usr/lib/libmajaudio.so"
-		${MAJ_PRELOAD:+LD_PRELOAD="$MAJ_PRELOAD"} /usr/bin/majestic -s >> /tmp/majestic.log 2>&1 &
+		if [ -n "$MAJ_PRELOAD" ]; then
+			env LD_PRELOAD="$MAJ_PRELOAD" /usr/bin/majestic -s >> /tmp/majestic.log 2>&1 &
+		else
+			/usr/bin/majestic -s >> /tmp/majestic.log 2>&1 &
+		fi
 		WARM=$!
 		n=0
 		while [ $n -lt 80 ]; do
