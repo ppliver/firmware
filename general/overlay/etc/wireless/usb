@@ -325,18 +325,49 @@ if [ "$1" = "rtl8188fu-t31-aoni-e97vj62" ]; then
 fi
 
 # SAZ1051 WS73 USB WiFi (vendor driver).
-# $soc on this board is reported by ipcinfo as hi3516cv613 (NOT cv610), so the
-# SoC token in the id MUST be hi3516cv613 or OpenIPC's network.cgi
-# adapter_scan() skips this entry and the WebUI dropdown stays empty.
-# wifi_soc_v15.ko is also exposed under /lib/modules/5.10.221 as a symlink
-# to /opt/saz_wifi (see saz1051-vendor.mk) so adapter_scan's
-# `find /lib/modules' existence check passes. The real ordered bring-up
-# (muxfix/plat_soc/wifi_soc_v15 + ws73_cfg.ini)
-# is done by /opt/tools/bringup_wifi.sh; the modprobe line below exists only so
-# the WebUI can detect the driver.
+#
+# *** SoC TOKEN MUST STAY "cv613" — DO NOT RENAME TO cv610 ***
+# ipcinfo --chip-name on this board reports hi3516cv613 (NOT cv610): OpenIPC's
+# board detection mislabels the real Hi3516CV610. network.cgi adapter_scan()
+# (var/www/cgi-bin/network.cgi) keeps a ws73-* entry only if its SoC token
+# matches that reported value (case "$soc" / case "$tok" prefix check), so an id
+# of ...cv610... would be SKIPPED -> the adapter disappears from the WebUI
+# "Wireless adapter" dropdown AND S40network's `usb $wlandev` would not match
+# the entry -> no ko loaded -> no WiFi. Keep cv613 to match ipcinfo.
+#
+# Driver bring-up is an ordered insmod sequence into /opt/saz_wifi (the vendor
+# ko chain); the network layer (wpa_supplicant + dhcp) is handled SEPARATELY by
+# `ifup wlan0` (see /etc/network/interfaces.d/wlan0), which S40network runs
+# immediately after this script. We deliberately do NOT start wpa_supplicant /
+# udhcpc here and do NOT call /opt/tools/bringup_wifi.sh — doing so would double
+# up with ifup wlan0. (bringup_wifi.sh remains the full bring-up only for the
+# legacy custom PID1 path, oipc_init.sh, which does not run S40network.)
+#
+# The trailing `modprobe wifi_soc_v15` is a no-op marker: adapter_scan() parses
+# `modprobe` lines to learn the driver module name, so it must stay (the explicit
+# insmods above do the real ordered load; the modprobe is just for WebUI discovery).
+# wifi_soc_v15.ko (and the rest of the chain) is exposed under /lib/modules/5.10.221
+# as a symlink to /opt/saz_wifi (see saz1051-vendor.mk) so adapter_scan's
+# `find /lib/modules -name '*.ko'` existence check passes.
 if [ "$1" = "ws73-hi3516cv613-saz1051" ]; then
-	modprobe wifi_soc_v15
-	/opt/tools/bringup_wifi.sh
+	K=/opt/saz_wifi
+	mkdir -p /system/etc /var/run/wpa_supplicant
+	[ -f /system/etc/ws73_cfg.ini ] || cp /etc/ws73_cfg.ini /system/etc/ws73_cfg.ini 2>/dev/null
+	insmod $K/rfkill.ko          2>/dev/null
+	insmod $K/libarc4.ko         2>/dev/null
+	insmod $K/firmware_class.ko  2>/dev/null
+	insmod $K/cfg80211_v20.ko    2>/dev/null
+	insmod $K/mac80211.ko        2>/dev/null
+	sleep 2
+	insmod $K/muxfix.ko mode=1 skip_usb=1 2>/dev/null
+	sleep 2
+	insmod $K/plat_soc.ko        2>/dev/null
+	if [ -f $K/wifi_soc_v15.ko ]; then
+		insmod $K/wifi_soc_v15.ko 2>/dev/null
+	else
+		insmod $K/wifi_soc.ko     2>/dev/null
+	fi
+	modprobe wifi_soc_v15 >/dev/null 2>&1 || true
 	exit 0
 fi
 

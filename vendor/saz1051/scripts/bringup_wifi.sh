@@ -16,7 +16,9 @@ mkdir -p /system/etc
 # wpa_supplicant 的 ctrl_iface 需要 unix socket -> 必须在可写文件系统上
 mkdir -p /var/run/wpa_supplicant
 
-mount -t tmpfs tmpfs /sys 2>/dev/null   # 仅当 /sys 尚未挂载时无害；已有挂载则失败
+# NOTE: the old `mount -t tmpfs tmpfs /sys` line was REMOVED — it shadowed the
+# real /sys with an empty tmpfs (breaking everything that reads /sys) whenever
+# /sys was already mounted, which it always is. Never re-add it.
 mount -t sysfs sysfs /sys 2>/dev/null
 
 # 重新插一次前先清干净（muxfix mode=1 skip_usb=1 只允许插一次）
