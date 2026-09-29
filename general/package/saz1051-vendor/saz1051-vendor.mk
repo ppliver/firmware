@@ -104,11 +104,17 @@ define SAZ1051_VENDOR_INSTALL_TARGET_CMDS
 	# network.cgi adapter_scan() can discover the adapter and offer it in the
 	# WebUI "Wireless adapter" dropdown. Runtime loading is still performed by
 	# /opt/tools/bringup_wifi.sh via explicit insmod (full ordered sequence +
-	# ws73_cfg.ini); this copy only satisfies adapter_scan's
+	# ws73_cfg.ini); this presence only satisfies adapter_scan's
 	# `find /lib/modules -name '*.ko'` existence check. The modprobe line in
 	# the usb entry (ws73-hi3516cv613-saz1051) references wifi_soc_v15.ko.
-	$(INSTALL) -m 644 -t $(TARGET_DIR)/lib/modules/5.10.221 \
-		$(wildcard $(SAZ1051_VENDOR_TREE)/wifi/*.ko)
+	# OPTIMIZATION: install these as *symlinks* to /opt/saz_wifi instead of
+	# duplicating the ~2.3 MB of .ko binaries in the rootfs. Both directories
+	# live in the same read-only squashfs, so the relative symlink always
+	# resolves; `find` follows it, so adapter_scan() is unaffected.
+	$(foreach ko,$(wildcard $(SAZ1051_VENDOR_TREE)/wifi/*.ko), \
+		ln -sf ../../../opt/saz_wifi/$(notdir $(ko)) \
+			$(TARGET_DIR)/lib/modules/5.10.221/$(notdir $(ko)); \
+	)
 
 	# ---- board scripts ----
 	$(INSTALL) -m 755 -d $(TARGET_DIR)/opt/oipc $(TARGET_DIR)/opt/oipc/sbin $(TARGET_DIR)/opt/tools
