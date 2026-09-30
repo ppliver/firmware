@@ -1,0 +1,14 @@
+#!/bin/sh
+# SAZ1051 WS73 USB WiFi bring-up.
+#
+# DISABLED: WiFi is now brought up entirely by the official chain —
+# S40network -> /etc/wireless/usb (ordered ko insmod, see that file) ->
+# `ifup wlan0` (/etc/network/interfaces.d/wlan0: wpa_supplicant + *resident*
+# udhcpc). Running bringup_wifi.sh here too would start a SECOND wpa_supplicant
+# and a one-shot udhcpc, which is exactly the double-up this firmware fixed.
+# The legacy custom PID1 path (oipc_init.sh) still calls /opt/tools/bringup_wifi.sh
+# directly; this init script is intentionally a no-op.
+case "$1" in
+	start|stop) ;;
+	*) echo "Usage: $0 {start|stop} (no-op: WiFi handled by S40network+ifup)"; exit 1 ;;
+esac

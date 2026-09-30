@@ -15,7 +15,18 @@ mem_start=0x40000000 # phy mem start
 mem_total=$(fw_printenv -n totalmem | tr -d 'M')
 mem_total=${mem_total:=64}
 
-os_mem_size=$(fw_printenv -n osmem | tr -d 'M')
+# Prefer kernel cmdline mem=NM -- that's the authoritative kernel/MMZ split,
+# but only when it's a strict subset of total RAM. With mmz_allocator=cma
+# (V4 CMA layouts), bootargs typically pass mem=<totalmem> with the MMZ
+# chunk CMA-reserved within that range; in that case mem= is no longer an
+# OS/MMZ split and we must fall through to the U-Boot osmem env.
+os_mem_size=$(awk 'BEGIN{RS=" "} /^mem=[0-9]+M/{gsub(/^mem=|M.*$/,""); print; exit}' /proc/cmdline)
+if [ -n "$os_mem_size" ] && [ "$os_mem_size" -ge "$mem_total" ]; then
+	os_mem_size=""
+fi
+if [ -z "$os_mem_size" ]; then
+	os_mem_size=$(fw_printenv -n osmem | tr -d 'M')
+fi
 os_mem_size=${os_mem_size:=32}
 
 YUV_TYPE0=0 # 0 -- raw, 1 --DC, 2 --bt1120, 3 --bt656
@@ -96,7 +107,7 @@ insert_detect() {
 	modprobe open_sys_config chip=${chipid} sensors=unknown g_cmos_yuv_flag=$YUV_TYPE0 board=${board}
 	insert_osal
 	modprobe open_base
-	modprobe hi3516ev200_isp
+	modprobe open_isp
 	modprobe open_sensor_i2c
 	modprobe open_sensor_spi
 }
@@ -104,7 +115,7 @@ insert_detect() {
 remove_detect() {
 	rmmod -w open_sensor_spi
 	rmmod -w open_sensor_i2c
-	rmmod -w hi3516ev200_isp
+	rmmod -w open_isp
 	rmmod -w open_base
 	rmmod -w open_osal
 	rmmod -w open_sys_config
@@ -134,7 +145,7 @@ remove_audio() {
 }
 
 insert_isp() {
-	modprobe hi3516ev200_isp
+	modprobe open_isp
 }
 
 insert_sil9024() {
@@ -173,7 +184,7 @@ insert_ko() {
 	modprobe open_sys
 	#	modprobe open_tde
 	modprobe open_rgn
-	modprobe open_vgs
+	modprobe open_vgs max_vgs_job=20 max_vgs_node=20 max_vgs_task=20
 	modprobe open_vi
 	insert_isp
 	modprobe open_vpss
@@ -182,7 +193,7 @@ insert_ko() {
 	modprobe open_chnl
 	modprobe open_vedu
 	modprobe open_rc
-	modprobe open_venc
+	modprobe open_venc VencMaxChnNum=3
 	modprobe open_h264e
 	modprobe open_h265e
 	modprobe open_jpege
@@ -197,9 +208,34 @@ insert_ko() {
 	modprobe open_mipi_rx
 	#	modprobe open_user
 	modprobe open_wdt
+
+	# Cipher engine -> /dev/cipher. majestic's native WebRTC takes AES-CTR
+	# for its SRTP transform from here: measured on an hi3516ev300, 86.0us of
+	# CPU per 1100-byte packet in software against 41.9 through the engine,
+	# because the driver sleeps on its completion interrupt and gives the CPU
+	# back while the block works. See docs/hisi/cipher-engine.md in majestic.
+	#
+	# New here in a way it is not on the other HiSilicon boards: this family
+	# never packaged a cipher module at all, and openhisilicon only started
+	# building one for hi3516ev200 recently. The vendor prebuilt could not
+	# have been used -- it links against hil_mmb_getby_phys_2, which this
+	# tree's osal did not export.
+	#
+	# Last, and after open_osal: modprobe would otherwise pull osal in as a
+	# dependency at whatever point this ran, ahead of insert_osal's own
+	# arguments. Failure is not an error -- an image built before that
+	# openhisilicon bump simply has no module to find, and that must not
+	# abort sensor bring-up.
+	# `|| true` because this is the LAST statement of insert_ko, which is
+	# in turn the last statement of the script, so its status becomes the
+	# exit status S70vendor reports. Without it an image whose
+	# openhisilicon predates the module loads every driver correctly and
+	# still reports "Loading vendor modules..." as a failure.
+	modprobe open_cipher 2>/dev/null || true
 }
 
 remove_ko() {
+	rmmod -w open_cipher 2>/dev/null
 	rmmod -w open_wdt
 	#	rmmod -w hi_user
 	remove_audio
@@ -219,7 +255,7 @@ remove_ko() {
 	#	rmmod -w hifb
 	#	rmmod -w open_vo
 	rmmod -w open_vpss
-	rmmod -w hi3516ev200_isp
+	rmmod -w open_isp
 	rmmod -w open_vi
 	rmmod -w open_vgs
 	rmmod -w open_rgn
@@ -329,6 +365,18 @@ for arg in $@; do
 	esac
 done
 #######################parse arg end########################
+
+# HWRNG: load before any conditional exit (os_mem mismatch, sensor
+# probe failure, etc.) so entropy is always available to userspace
+# daemons (majestic, dropbear, openssl) that block on getrandom().
+if [ "$b_arg_insmod" = "1" ]; then
+    modprobe open_hwrng 2>/dev/null
+fi
+
+
+
+
+
 if [ $os_mem_size -ge $mem_total ]; then
 	echo "[err] os_mem[$os_mem_size], over total_mem[$mem_total]"
 	exit
@@ -346,6 +394,16 @@ fi
 # Sensor config
 # SENSOR=${SENSOR:=imx307}
 #
+# A failed probe used to be stored as sensor=unknown, and rcS exports the
+# stored value into SENSOR before this ever runs -- so an already-latched
+# camera arrives here with SENSOR=unknown, takes the "set manually" branch
+# below, and never probes again however the real fault is fixed. Treat it
+# as unset and drop it from the environment so this boot re-detects. #2428.
+if [ "$SENSOR" = "unknown" ]; then
+	SENSOR=
+	fw_setenv sensor
+fi
+
 if [ -n "$SENSOR" ]; then
 	logger -s -p daemon.info -t hisilicon "Manualy set SENSOR as ${SENSOR}"
 else
@@ -359,7 +417,15 @@ else
 		export SENSOR=${SENSOR_DETECT:=unknown}
 		remove_detect
 		logger -s -p daemon.info -t hisilicon "Get data from ipcinfo and set SENSOR as ${SENSOR}"
-		fw_setenv sensor $SENSOR && logger -s -p daemon.info -t hisilicon "Write detected ${SENSOR} to U-Boot ENV"
+		# Do not persist a failed detection. The fw_printenv branch above wins
+		# whenever `sensor` exists, so writing "unknown" here latches the camera
+		# into "SENSOR is not detected, aborting..." for good -- detection never
+		# runs again and nothing says why. Seen on a GK7202V500 in #2428.
+		# load_ingenic has always cleared the variable instead of storing the
+		# miss; this is the same behaviour, reached by not writing at all.
+		if [ "$SENSOR" != "unknown" ]; then
+			fw_setenv sensor $SENSOR && logger -s -p daemon.info -t hisilicon "Write detected ${SENSOR} to U-Boot ENV"
+		fi
 	fi
 fi
 

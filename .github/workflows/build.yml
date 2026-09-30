@@ -3,12 +3,14 @@ on:
   pull_request:
     branches:
       - master
-  schedule:
-    - cron: '30 22 * * *'
   workflow_dispatch:
 
-env:
-  TAG_NAME: latest
+# NOTE (ppliver/firmware fork): this is a private mirror of OpenIPC/firmware
+# carrying the SAZ1051 board. Upstream's own build.yml selects boards with
+# .github/scripts/ci-matrix.py and, by design, skips PRs on clones
+# (`github.event.repository.private`), so it never builds here. This file is the
+# fork's focused replacement: one static matrix entry for saz1051 and an
+# upload-artifact step (no release writes, no secrets needed).
 
 jobs:
   buildroot:
@@ -19,15 +21,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          
-
-          # Hisilicon [HI3516CV300]
-          #- {"platform": "hi3516cv300", "release": "mini"}
-           - {"platform": "hi3516cv300", "release": "lite"}
-          #- {"platform": "hi3516cv300", "release": "ultimate"}
-          #- {"platform": "hi3516cv300", "release": "fpv"}
-
-        
+          # SAZ1051 [Hi3516CV610 + OS05L10 + WS73] - 128MB SPI-NAND
+          - {"platform": "saz1051", "release": "ultimate"}
 
     steps:
       - name: Checkout source
@@ -36,63 +31,38 @@ jobs:
       - name: Prepare firmware
         run: |
           echo "nameserver 8.8.8.8" | sudo tee /etc/resolv.conf
-          echo CACHE_DATE=$(date +%m) >> ${GITHUB_ENV}
+          echo "CACHE_DATE=$(date +%m)" >> ${GITHUB_ENV}
+          # NOTE: `>> $GITHUB_ENV` only affects LATER steps, so export it here too.
+          # Without this the download below lands in buildroot's default
+          # $(O)/buildroot-*/dl while the build step (which does see the env var)
+          # extracts from $(O)/dl -> stamps say "downloaded" but the tarball is
+          # missing, and the build dies in host-pkgconf with "No such file".
+          echo "BR2_DL_DIR=${GITHUB_WORKSPACE}/output/dl" >> ${GITHUB_ENV}
+          export BR2_DL_DIR="${GITHUB_WORKSPACE}/output/dl"
           make BOARD=${{matrix.platform}}_${{matrix.release}} br-source
 
       - name: Setup ccache
-        if: github.event_name != 'pull_request'
         uses: actions/cache@v4
-        with:
-          path: /tmp/ccache
-          key: ${{matrix.platform}}_${{matrix.release}}-${{env.CACHE_DATE}}
-
-      - name: Restore ccache
-        if: github.event_name == 'pull_request'
-        uses: actions/cache/restore@v4
         with:
           path: /tmp/ccache
           key: ${{matrix.platform}}_${{matrix.release}}-${{env.CACHE_DATE}}
 
       - name: Build firmware
         run: |
-          export GIT_HASH=$(git rev-parse --short ${GITHUB_SHA})
-          export GIT_BRANCH=${GITHUB_REF_NAME}
-          echo GIT_HASH=${GIT_HASH} >> ${GITHUB_ENV}
-          echo GIT_BRANCH=${GIT_BRANCH} >> ${GITHUB_ENV}
-
           mkdir -p /tmp/ccache
           ln -s /tmp/ccache ${HOME}/.ccache
           make BOARD=${{matrix.platform}}_${{matrix.release}}
 
-          TIME=$(date -d @${SECONDS} +%M:%S)
-          echo TIME=${TIME} >> ${GITHUB_ENV}
-
-          NORFW=${GITHUB_WORKSPACE}/output/images/openipc.${{matrix.platform}}-nor-${{matrix.release}}.tgz
-          if [ -e ${NORFW} ]; then
-            echo NORFW=${NORFW} >> ${GITHUB_ENV}
-          fi
-
-          NANDFW=${GITHUB_WORKSPACE}/output/images/openipc.${{matrix.platform}}-nand-${{matrix.release}}.tgz
-          if [ -e ${NANDFW} ]; then
-            echo NANDFW=${NANDFW} >> ${GITHUB_ENV}
-          fi
-
-      - name: Upload firmware
-        if: github.event_name != 'pull_request'
-        uses: softprops/action-gh-release@v2
+      - name: Upload build artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
         with:
-          tag_name: ${{env.TAG_NAME}}
-          files: |
-            ${{env.NORFW}}
-            ${{env.NANDFW}}
-
-      - name: Send binary
-        if: github.event_name != 'pull_request' && env.NORFW
-        run: |
-          TG_MSG="Commit: ${GIT_HASH}\nBranch: ${GIT_BRANCH}\nTag: ${TAG_NAME}\nTime: ${TIME}\n\n"
-          TG_ICON="\xE2\x9C\x85 GitHub Actions"
-          TG_HEADER=$(echo -e ${TG_MSG}${TG_ICON})
-          TG_TOKEN=${{secrets.TELEGRAM_TOKEN_BOT_OPENIPC}}
-          TG_CHANNEL=${{secrets.TELEGRAM_CHANNEL_OPENIPC_DEV}}
-          HTTP=$(curl -s -o /dev/null -w %{http_code} https://api.telegram.org/bot${TG_TOKEN}/sendDocument -F chat_id=${TG_CHANNEL} -F caption="${TG_HEADER}" -F document=@${NORFW})
-          echo Telegram response: ${HTTP}
+          name: firmware-${{matrix.platform}}-${{matrix.release}}
+          # 128MB SPI-NAND board, so only the Makefile's NAND branch runs and it
+          # emits exactly one file. Two paths listed here were phantoms and only
+          # cost a "No files were found" warning per run: the -nor- tgz (no NOR
+          # branch) and the tgz's own .md5sum (PREPARE_REPACK deletes
+          # images/*.md5sum right before taring; the per-image checksums for
+          # uImage/rootfs.ubi are *inside* the tgz).
+          path: output/images/openipc.${{matrix.platform}}-nand-${{matrix.release}}.tgz
+          if-no-files-found: error

@@ -1,0 +1,12 @@
+# SAZ1051 (hi3516cv6xx ultimate) rootfs exclusions.
+# Processed by general/scripts/rootfs_script.sh AFTER every package has
+# installed, so these deletions deterministically win over what the
+# packages shipped (unlike `rm -f` inside a package's per-package staging
+# dir, which is a no-op for files owned by other packages).
+#
+# PTZ web endpoints (2026-09-30, video-only board): shipped by the
+# majestic-webui dist tarball (cp -r www), but this board has no
+# pan/tilt hardware.
+
+/var/www/cgi-bin/j/ptz.cgi
+/var/www/a/preview-ptz.js
