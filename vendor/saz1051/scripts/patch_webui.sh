@@ -40,16 +40,13 @@ echo "patch_webui: neutralized majestic -v version probes"
 #
 # Widen the condition rather than deleting the check: if a coil pad is ever
 # assigned and irCutEnabled flipped to true, the real diagnosis still runs.
-# --- PTZ CGI removal (2026-09-30, video-only board) -------------------------
-# The majestic-webui dist tarball ships a generic PTZ control endpoint
-# (/var/www/cgi-bin/j/ptz.cgi, POST "move the camera") and its preview-side
-# joystick script. This board has NO PTZ hardware (the motor_mx2208a
-# integration was removed 2026-09-30), so the CGI can never do anything: it
-# just adds a 404-able dead endpoint to the web server. Drop both. The rest
-# of the /j/ cgi directory (network, sdcard, ...) stays untouched.
-rm -f "$TARGET/var/www/cgi-bin/j/ptz.cgi" \
-      "$TARGET/var/www/a/preview-ptz.js"
-echo "patch_webui: removed PTZ web endpoints (video-only board)"
+# NOTE (2026-09-30): this script only makes sense for editing FILE CONTENT
+# (sed) -- those edits carry over the per-package staging merge. It CANNOT
+# delete files that another package installed (e.g. the majestic-webui dist's
+# /var/www/cgi-bin/j/ptz.cgi): each package stages into its own
+# output/per-package/<pkg>/target and the merge does not propagate deletions.
+# File deletions belong in general/scripts/excludes/saz1051_ultimate.list,
+# which rootfs_script.sh processes after every package.
 
 for f in "$TARGET/var/www/a/ircut-check.js"; do
     [ -f "$f" ] || continue
