@@ -1,12 +1,31 @@
 #!/bin/sh
-# OpenIPC-on-TF shim: 本 TF rootfs 无真 ipcinfo(OpenIPC 的 IPCam 信息工具)。
-# S70vendor 用 `ipcinfo -v` 选 load_<soc> 脚本; load_hisilicon 仅在未显式给
-# SENSOR 时才用 --short-sensor; sysupgrade 用 `-F` 判 flash 类型(NOR/NAND)。
+# SAZ1051 chip-report shim (2026-09-30).
+#
+# The die ID on this board reads back as "hi3516cv613" through ipctool's real
+# ipcinfo, but the board IS a Hi3516CV610 (user-confirmed 2026-09-30; the
+# earlier "keep cv613" decision is superseded). Every caller must see
+# hi3516cv610 so all naming agrees — in particular:
+#   * WebUI /var/www/cgi-bin/p/common.cgi:535 `soc=$(ipcinfo --chip-name)`
+#     drives network.cgi adapter_scan()'s SoC-token prefix match, so the
+#     /etc/wireless/usb entry ws73-hi3516cv610-saz1051 stays visible in the
+#     "Wireless adapter" dropdown and S40network's `usb $wlandev` resolves;
+#   * load_hisilicon (--short-sensor) and sysupgrade (-F flash type) probes.
+#
+# Installed TWICE by saz1051-vendor.mk: as /opt/oipc/sbin/ipcinfo (PATH shim
+# for shell sessions) and over ipctool's /usr/bin/ipcinfo (the WebUI/cgi PATH,
+# with the real binary preserved as /usr/bin/ipcinfo.real). Known queries are
+# answered here; anything else falls through to the real binary (--family,
+# --temp, ...).
 case "$1" in
 	--chip-name)    echo hi3516cv610 ;;
 	--short-sensor) echo os05l10 ;;
 	-v)             echo 3516cv610_20s ;;
 	-F)             echo nand ;;
-	*)              echo hi3516cv610 ;;
+	*)
+		if [ -x /usr/bin/ipcinfo.real ]; then
+			exec /usr/bin/ipcinfo.real "$@"
+		fi
+		echo hi3516cv610
+		;;
 esac
 exit 0

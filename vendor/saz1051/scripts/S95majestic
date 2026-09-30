@@ -53,6 +53,15 @@ start() {
 		# VB sizing agrees with the kernel MMZ geometry.
 		export SENSOR=os05l10
 		export MMZ_RESERVE_M=48
+		# --- boot guard (2026-09-30): audio MUST NOT boot enabled --------
+		# Video-only board. If the WebUI ever saves audio.enabled:true,
+		# the vendor majestic dies in audio RTP init on the NEXT boot
+		# ("Cannot find a audio codec for RTP") and on the official init
+		# chain nothing restarts it -> no video at all (happened for real
+		# on 2026-09-30). Force the audio block back off before launch.
+		# The address range ends at the next top-level key, so the
+		# image/video0/video1 blocks are untouched.
+		sed -i '/^audio:/,/^[a-z]/{s/  enabled: true/  enabled: false/;s/  outputEnabled: true/  outputEnabled: false/}' /etc/majestic.yaml 2>/dev/null
 		# No audio: video-only board (2026-09-30). The former
 		# LD_PRELOAD=/usr/lib/libmajaudio.so audio-init shim is gone;
 		# /etc/majestic.yaml keeps audio disabled.

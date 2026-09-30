@@ -326,14 +326,19 @@ fi
 
 # SAZ1051 WS73 USB WiFi (vendor driver).
 #
-# *** SoC TOKEN MUST STAY "cv613" — DO NOT RENAME TO cv610 ***
-# ipcinfo --chip-name on this board reports hi3516cv613 (NOT cv610): OpenIPC's
-# board detection mislabels the real Hi3516CV610. network.cgi adapter_scan()
-# (var/www/cgi-bin/network.cgi) keeps a ws73-* entry only if its SoC token
-# matches that reported value (case "$soc" / case "$tok" prefix check), so an id
-# of ...cv610... would be SKIPPED -> the adapter disappears from the WebUI
-# "Wireless adapter" dropdown AND S40network's `usb $wlandev` would not match
-# the entry -> no ko loaded -> no WiFi. Keep cv613 to match ipcinfo.
+# SoC token = "hi3516cv610" (2026-09-30; supersedes the old "keep cv613"
+# decision). network.cgi adapter_scan() keeps a ws73-* entry only if its SoC
+# token prefix-matches $soc, and common.cgi:535 sets
+#   soc=$(ipcinfo --chip-name)
+# through /usr/bin — where ipctool's real binary reports the raw die ID
+# "hi3516cv613". The saz1051-vendor package therefore replaces /usr/bin/ipcinfo
+# with a shim that answers hi3516cv610 (real binary preserved as
+# ipcinfo.real, unknown queries fall through), so $soc=hi3516cv610 and this
+# cv610 token matches everywhere: WebUI "Wireless adapter" dropdown,
+# S40network's `usb $wlandev`, and the wlandev U-Boot env var. All four must
+# stay in lockstep on cv610 — do NOT rename only one of them.
+# (On devices flashed before 2026-09-30 the old cv613 entry + wlandev remain
+# until reflash; the shim is what makes the cv610 spelling safe.)
 #
 # Driver bring-up is an ordered insmod sequence into /opt/saz_wifi (the vendor
 # ko chain); the network layer (wpa_supplicant + dhcp) is handled SEPARATELY by
@@ -349,7 +354,7 @@ fi
 # wifi_soc_v15.ko (and the rest of the chain) is exposed under /lib/modules/5.10.221
 # as a symlink to /opt/saz_wifi (see saz1051-vendor.mk) so adapter_scan's
 # `find /lib/modules -name '*.ko'` existence check passes.
-if [ "$1" = "ws73-hi3516cv613-saz1051" ]; then
+if [ "$1" = "ws73-hi3516cv610-saz1051" ]; then
 	K=/opt/saz_wifi
 	mkdir -p /system/etc /var/run/wpa_supplicant
 	[ -f /system/etc/ws73_cfg.ini ] || cp /etc/ws73_cfg.ini /system/etc/ws73_cfg.ini 2>/dev/null

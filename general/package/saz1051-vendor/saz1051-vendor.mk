@@ -114,7 +114,7 @@ define SAZ1051_VENDOR_INSTALL_TARGET_CMDS
 	# /opt/tools/bringup_wifi.sh via explicit insmod (full ordered sequence +
 	# ws73_cfg.ini); this presence only satisfies adapter_scan's
 	# `find /lib/modules -name '*.ko'` existence check. The modprobe line in
-	# the usb entry (ws73-hi3516cv613-saz1051) references wifi_soc_v15.ko.
+	# the usb entry (ws73-hi3516cv610-saz1051) references wifi_soc_v15.ko.
 	# OPTIMIZATION: install these as *symlinks* to /opt/saz_wifi instead of
 	# duplicating the ~2.3 MB of .ko binaries in the rootfs. Both directories
 	# live in the same read-only squashfs, so the relative symlink always
@@ -144,6 +144,23 @@ define SAZ1051_VENDOR_INSTALL_TARGET_CMDS
 	#   fw_setenv  -- set_allocator() writes mmz_allocator; no-op here.
 	# Byte-identical to the running new5 image.
 	$(INSTALL) -m 755 -t $(TARGET_DIR)/opt/oipc/sbin $(wildcard $(SAZ1051_VENDOR_TREE)/scripts/oipc_sbin/*)
+
+	# ---- chip-report shim over ipctool's /usr/bin/ipcinfo (2026-09-30) ----
+	# The die reads hi3516cv613 via ipctool, but the board is a Hi3516CV610 and
+	# ALL naming must agree on cv610 (user decision 2026-09-30). WebUI
+	# common.cgi:535 does soc=$(ipcinfo --chip-name) through this exact PATH
+	# (/usr/bin), and that $soc drives network.cgi adapter_scan()'s token
+	# match against the /etc/wireless/usb entry (ws73-hi3516cv610-saz1051).
+	# Verified live 2026-09-30: with the real ipctool reporting cv613, a
+	# cv610-named entry is filtered out of the "Wireless adapter" dropdown.
+	# The real binary stays as /usr/bin/ipcinfo.real; the shim falls through
+	# to it for queries it does not answer (--family, --temp, ...).
+	$(INSTALL) -m 755 -d $(TARGET_DIR)/usr/bin
+	if [ -f $(TARGET_DIR)/usr/bin/ipcinfo ] && [ ! -L $(TARGET_DIR)/usr/bin/ipcinfo ]; then \
+		mv $(TARGET_DIR)/usr/bin/ipcinfo $(TARGET_DIR)/usr/bin/ipcinfo.real; \
+	fi
+	$(INSTALL) -m 755 -t $(TARGET_DIR)/usr/bin \
+		$(SAZ1051_VENDOR_TREE)/scripts/oipc_sbin/ipcinfo
 
 	$(INSTALL) -m 755 -t $(TARGET_DIR)/opt/tools $(SAZ1051_VENDOR_TREE)/scripts/sensor_mux.sh
 	$(INSTALL) -m 755 -t $(TARGET_DIR)/opt/tools $(SAZ1051_VENDOR_TREE)/scripts/bringup_wifi.sh
@@ -203,6 +220,8 @@ endef
 
 # Installed last so it overrides OpenIPC's from-source majestic binary and the
 # WebUI files (the `-v` probe patch must run after majestic-webui installs).
-SAZ1051_VENDOR_DEPENDENCIES = majestic majestic-webui
+# ipctool must install BEFORE this package so the /usr/bin/ipcinfo shim can
+# move the real binary aside.
+SAZ1051_VENDOR_DEPENDENCIES = majestic majestic-webui ipctool
 
 $(eval $(generic-package))
