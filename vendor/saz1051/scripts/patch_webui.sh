@@ -40,6 +40,17 @@ echo "patch_webui: neutralized majestic -v version probes"
 #
 # Widen the condition rather than deleting the check: if a coil pad is ever
 # assigned and irCutEnabled flipped to true, the real diagnosis still runs.
+# --- PTZ CGI removal (2026-09-30, video-only board) -------------------------
+# The majestic-webui dist tarball ships a generic PTZ control endpoint
+# (/var/www/cgi-bin/j/ptz.cgi, POST "move the camera") and its preview-side
+# joystick script. This board has NO PTZ hardware (the motor_mx2208a
+# integration was removed 2026-09-30), so the CGI can never do anything: it
+# just adds a 404-able dead endpoint to the web server. Drop both. The rest
+# of the /j/ cgi directory (network, sdcard, ...) stays untouched.
+rm -f "$TARGET/var/www/cgi-bin/j/ptz.cgi" \
+      "$TARGET/var/www/a/preview-ptz.js"
+echo "patch_webui: removed PTZ web endpoints (video-only board)"
+
 for f in "$TARGET/var/www/a/ircut-check.js"; do
     [ -f "$f" ] || continue
     # NB: the minified source reads `,k="off"===i(l.irCut);` -- the variable is
