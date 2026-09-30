@@ -1,7 +1,8 @@
 #!/bin/sh
 # SAZ1051 OpenIPC NAND init  (Hi3516CV610 + OS05L10 + WS73)   [v6 去整机重启·对齐标准 OpenIPC]
-# 取代 stock /init：本内核无 OVERLAY_FS，stock init 会在 `grep overlay /proc/filesystems`
-# 处 exit 1 -> kill init -> kernel panic。这里直接挂载 + 拉起全栈，逻辑自持、可诊断。
+# 取代 stock /init：本内核【带】overlayfs（/proc/filesystems 含 nodev overlay），
+# 用 overlay 把 /etc 盖到 ubi0:rootfs_data 实现配置持久化（首启内核自动 mkfs.ubifs 空卷）。
+# 这里直接挂载 + 拉起全栈，逻辑自持、可诊断。
 #
 # v2 改动(2026-09-22)：针对"访问 web 后台 -> OOM -> clear_isp -> 内核 panic 重启"
 #   1. tmpfs 限额(size=)：防止 HLS/日志把内存撑爆。
@@ -113,21 +114,35 @@ if [ -b /dev/mmcblk0 ]; then
 		fi
 	fi
 fi
+# ---- UBI 路线前置：确保 /overlay 目录 + UBI 字符设备/卷设备节点就绪 ----
+# PID1 早期 devtmpfs/mdev 竞态可能使 /dev/ubi0 / /dev/ubi0_1 暂缺，导致挂载失败 ->
+# /etc 退回 tmpfs（每次重启丢配置）。显式轮询等待最多 6s，确保 UBI 设备节点出现。
+# 实测本内核【有】overlayfs（/proc/filesystems 含 nodev overlay），旧注释"无 OVERLAY_FS"已过时。
+mkdir -p /overlay
+for _i in $(seq 1 60); do
+	[ -e /dev/ubi0 ] && [ -e /dev/ubi0_1 ] && break
+	mdev -s 2>/dev/null
+	sleep 0.1
+done
 # ---- 0a-NAND. NAND UBI 持久化路线（无需 TF 卡，官方 hisilicon rootfs_data 设计）----
-# ubinize_hisilicon.cfg 预留 UBI 第 2 卷 (ubi0:rootfs_data, ubifs, autoresize) 正是给
-# "持久化 /etc"：官方 init 把它 mount 成 /overlay 作整根 overlay 的 upper。本板启动链
-# 是 PID1=oipc_init.sh（无 pivot_root），故不做整根 overlay，只把 /etc 提到同一 ubi
-# upper 层：bind 工厂只读 /etc 为 lower，ubi 卷作 upper。/etc/shadow、WebUI token、
-# TZ、interfaces 全落 NAND，重启不丢。优先级：TF 卡路线 > 本 UBI 路线 > tmpfs 兜底。
-if [ -z "$etc_persisted" ] && [ -e /dev/ubi0 ] && [ -d /overlay ]; then
-	if mount -t ubifs ubi0:rootfs_data /overlay 2>/dev/null; then
-		mkdir -p /overlay/etc /overlay/.work 2>/dev/null
+# ubinize 预留 UBI 第 2 卷 (ubi0:rootfs_data, ubifs, autoresize) 给"持久化 /etc"：
+# 首启内核自动 mkfs.ubifs 格式化空卷，bind 工厂只读 /etc 为 lower，ubi 卷作 upper。
+# /etc/shadow、WebUI token、TZ、interfaces 全落 NAND，重启不丢。
+# 优先级：TF 卡路线 > 本 UBI 路线 > tmpfs 兜底。
+# ★ 关键修复：lowerdir 的绑定目标 /overlay/.lower 必须先 mkdir，否则 mount --bind 失败 ->
+#   整条 overlay 跳过 -> 落到 tmpfs（这就是之前"重启丢配置"的真根因）。
+if [ -z "$etc_persisted" ] && [ -e /dev/ubi0_1 ] && [ -d /overlay ]; then
+	_mnt=0
+	for _k in $(seq 1 10); do
+		if mount -t ubifs ubi0:rootfs_data /overlay 2>/dev/null; then _mnt=1; break; fi
+		sleep 0.3
+	done
+	if [ "$_mnt" = "1" ]; then
+		mkdir -p /overlay/etc /overlay/.lower /overlay/.work 2>/dev/null
 		# 首启：把出厂 /etc 拷进持久层（此后持久层接管，改 /etc 都落 ubi）。
 		[ -n "$(ls -A /overlay/etc 2>/dev/null)" ] || cp -a /etc/. /overlay/etc/ 2>/dev/null
 		if mount --bind /etc /overlay/.lower 2>/dev/null &&
-			mount -t overlay overlay \
-				-o lowerdir=/overlay/.lower,upperdir=/overlay/etc,workdir=/overlay/.work \
-				/etc 2>/dev/null; then
+			mount -t overlay overlay 				-o lowerdir=/overlay/.lower,upperdir=/overlay/etc,workdir=/overlay/.work 				/etc 2>/dev/null; then
 			etc_persisted=1
 			say "[0a] /etc -> overlay persistent (ubi ubi0:rootfs_data) OK, entries=$(ls /etc 2>/dev/null | wc -l)"
 		else
@@ -135,26 +150,9 @@ if [ -z "$etc_persisted" ] && [ -e /dev/ubi0 ] && [ -d /overlay ]; then
 			umount /etc 2>/dev/null
 			umount /overlay 2>/dev/null
 		fi
-	fi
-fi
-if [ -z "$etc_persisted" ]; then
-	if ! touch /etc/.rwtest 2>/dev/null; then
-		mkdir -p /tmp/.etc_ro
-		mount --bind /etc /tmp/.etc_ro 2>/dev/null
-		mount -t tmpfs -o size=4M,mode=755 tmpfs /etc 2>/dev/null
-		cp -a /tmp/.etc_ro/. /etc/ 2>/dev/null
-		umount /tmp/.etc_ro 2>/dev/null
-		rmdir /tmp/.etc_ro 2>/dev/null
-		rm -f /etc/.rwtest 2>/dev/null
-		if touch /etc/.rwtest 2>/dev/null; then
-			rm -f /etc/.rwtest 2>/dev/null
-			say "[0a] /etc -> tmpfs(4M) writable OK (volatile!), entries=$(ls /etc 2>/dev/null | wc -l)"
-		else
-			say "[0a] !! /etc still read-only -> SSH hostkey / Web token / wizard will fail"
-		fi
 	else
-		rm -f /etc/.rwtest 2>/dev/null
-		say "[0a] /etc already writable (overlay?)"
+		say "[0a] !! ubi0:rootfs_data mount failed (timeout) -> tmpfs (volatile!)"
+		umount /overlay 2>/dev/null
 	fi
 fi
 
@@ -181,25 +179,6 @@ say "[1] /dev/ot_mipi_rx: $(ls -la /dev/ot_mipi_rx 2>&1 | tr '\n' ' ')"
 if [ -x /opt/tools/sensor_mux.sh ]; then
 	say "[2] sensor_mux.sh"
 	/opt/tools/sensor_mux.sh 2>&1 | while read l; do echo "    | $l"; done
-fi
-
-# ---- 2a. PTZ 云台 motor（MiXic MX2208A, misc /dev/swmotor）----
-# 设备 node 由 misc device 生成（mdev -s）。GPIO 默认 en=63 data=13 clk=12 rst=8
-# 来自 .ko .data 段 + 2026-09-24 实况 insmod 验证，见 vendor/saz1051/ptz/README.md。
-# 本脚本是 PID1（init=/opt/oipc/oipc_init.sh），根本不跑 /etc/init.d，故 S45saz_motor
-# 不会执行；把它的加载逻辑搬到这里（裸 insmod 兜底，与原厂 start_swapp.sh 一致）。
-# 若 /lib/modules/.../motor_mx2208a.ko 缺失或加载失败，不影响出图/音频（PTZ 静默不可用）。
-MOTOR_KO=/lib/modules/5.10.221/motor_mx2208a.ko
-if [ -f "$MOTOR_KO" ]; then
-	if [ ! -e /dev/swmotor ]; then
-		insmod "$MOTOR_KO" gpio_motor_en=63 gpio_motor_data=13 \
-			gpio_motor_clk=12 gpio_motor_rst=8 2>/dev/null \
-			|| insmod "$MOTOR_KO" 2>/dev/null
-		mdev -s 2>/dev/null
-	fi
-	say "[2a] swmotor: $(ls -la /dev/swmotor 2>&1 | tr '\n' ' ')"
-else
-	say "[2a] PTZ motor ko MISSING ($MOTOR_KO) — PTZ disabled"
 fi
 
 # ---- 3. WiFi（后台，不阻塞启动）----
@@ -249,12 +228,8 @@ say "[5b] mipi rw-open ready (tries=${n})"
 #   退出并 wait 回收; 第二次启动时 ioctl 即可成功 unpark, MIPI 出数据。
 export SENSOR=os05l10
 
-# ★ 音频垫片(2026-09-28 修复回归)：必须 LD_PRELOAD 挂 /usr/lib/libmajaudio.so，否则
-#   majestic 缺 ss_mpi_audio_* 符号 -> acodec 配置失败 / ADEC 报 ERR_ADEC_NOT_CONFIG，
-#   麦克风与喇叭全废。注意 init=/opt/oipc/oipc_init.sh 启动链根本不跑 S95majestic，
-#   所以这里直接给 majestic 的两个启动点加 LD_PRELOAD（warm-up 与 supervisor 都要）。
-MAJ_PRELOAD=""
-[ -r /usr/lib/libmajaudio.so ] && MAJ_PRELOAD="/usr/lib/libmajaudio.so"
+# [SAZ1051 2026-09-30] 音频垫片(libmajaudio.so LD_PRELOAD)已随"视频纯化"移除：
+# 本板按无麦克风/无喇叭对待，majestic.yaml audio.enabled 恒为 false。
 
 # 清掉 open_isp 的 "ISP[0] already inited" 状态（仅在 majestic 已优雅停止时调用）。
 # ★ 危险边界：若 majestic 是被 OOM/信号杀掉的，VI/MIPI 中断仍在产生，此时 rmmod open_isp
@@ -283,11 +258,7 @@ rotate_log() {
 if [ -x /usr/bin/majestic ] && [ "$MAJ_WARMUP" = "1" ]; then
 	say "[6] majestic warm-up run (目的: 设 MIPI lane mode)"
 	: > /tmp/majestic.log
-	if [ -n "$MAJ_PRELOAD" ]; then
-		env LD_PRELOAD="$MAJ_PRELOAD" /usr/bin/majestic -s >> /tmp/majestic.log 2>&1 &
-	else
-		/usr/bin/majestic -s >> /tmp/majestic.log 2>&1 &
-	fi
+	/usr/bin/majestic -s >> /tmp/majestic.log 2>&1 &
 	WARM=$!
 	# ★ "见好就收": 一旦 SET_DEV_ATTR 落地(lane mode 写进 open_mipi_rx)就立刻退出。
 	n=0
@@ -320,11 +291,7 @@ maj_supervise() {
 		GRACEFUL=0
 		say "[6] starting majestic (supervisor), MemAvailable=$(memavail)kB"
 		rotate_log
-		if [ -n "$MAJ_PRELOAD" ]; then
-			env LD_PRELOAD="$MAJ_PRELOAD" /usr/bin/majestic -s >> /tmp/majestic.log 2>&1 &
-		else
-			/usr/bin/majestic -s >> /tmp/majestic.log 2>&1 &
-		fi
+		/usr/bin/majestic -s >> /tmp/majestic.log 2>&1 &
 		MP=$!
 		# 启动期轮询等 :554 最长 60s（冷启动建 VENC + 起 :554 实测 10~20s）。
 		# 不再用固定 sleep 14 后判活 -> 负载高就误判成失败。

@@ -16,9 +16,17 @@
 #       -> /opt/saz_wifi, /etc/ws73, /etc/wireless
 #   * board init + bring-up scripts  -> /opt/oipc, /opt/tools
 #   * majestic.yaml                  -> /etc/majestic.yaml
-#   * audio-init LD_PRELOAD shim     -> /usr/lib/libmajaudio.so
-#       + its own S95majestic        -> /etc/init.d/S95majestic
+#   * its own S95majestic            -> /etc/init.d/S95majestic
 #
+# NOTE (2026-09-30): this board is VIDEO-ONLY. The mic/speaker (audio) and
+# PTZ (motor_mx2208a) integration was removed after the audio path could not
+# be brought up end-to-end; the device is treated as having no mic, speaker
+# or pan/tilt. majestic.yaml keeps audio disabled (enabling it wedges the
+# vendor majestic's MPP: RTSP up but zero VENC channels). The osdrv MPP
+# audio userspace libs stay installed (upstream package, and the vendor
+# majestic binary has hard DT_NEEDED entries on libss_mpi_audio.so etc.) —
+# they are just never driven: the audio kernel modules (open_aio/ai/ao/...)
+# are no longer shipped, so no codec/AIO device exists.
 # MPP userspace .so come from the upstream hisilicon-osdrv-hi3516cv6xx package
 # (selected alongside this one). That package also drops a load_hisilicon in
 # /usr/bin, but oipc_init.sh does NOT reach the loader through PATH -- it tests
@@ -154,51 +162,22 @@ define SAZ1051_VENDOR_INSTALL_TARGET_CMDS
 	# open_isp (lane mode persists) so the real S95majestic gets a live link.
 	$(INSTALL) -m 755 -t $(TARGET_DIR)/etc/init.d $(SAZ1051_VENDOR_TREE)/scripts/S94saz_warmup
 
-	# ---- audio init shim (LD_PRELOAD) + the S95 that loads it ----
-	# The vendor majestic binary never calls the SDK's seven audio inits, so
-	# ADEC channel creation fails (ERR_ADEC_NOT_CONFIG) and the speaker is
-	# dead. libmajaudio.so is a libc-free constructor shim that dlopen()s the
-	# two SDK audio libs, runs the seven inits, AND configures /dev/acodec
-	# (mic input path + speaker DAC output) — without the acodec ioctls the
-	# microphone fails with ERR_AI_NOT_CONFIG. The .so is BUILT FROM SOURCE
-	# by SAZ1051_VENDOR_BUILD_CMDS (TARGET_CC), not shipped prebuilt, so the
-	# acodec fix in audio_shim.c is always compiled against the target.
-	# Rationale, evidence, rebuild recipe: vendor/saz1051/audio/BUILD.md
-	$(INSTALL) -m 755 -d $(TARGET_DIR)/usr/lib
-	$(INSTALL) -m 644 -t $(TARGET_DIR)/usr/lib \
-		$(@D)/libmajaudio.so
-
 	# Overrides the copy the generic `majestic` package installs (this package
 	# depends on it, so generic installs first). Diff vs upstream: the daemon
-	# launch inside start()'s subshell is preceded by an LD_PRELOAD export for
-	# the shim. Upstream's SIGHUP reasoning is preserved verbatim.
+	# launch inside start()'s subshell exports SENSOR=os05l10 and
+	# MMZ_RESERVE_M=48 — without them an S95-launched majestic brings up the
+	# web server but NEVER creates the VENC channels (RTSP answers 200 to
+	# DESCRIBE/SETUP yet PLAY yields zero RTP bytes; verified 2026-09-30 with
+	# and without the exports). Upstream's SIGHUP reasoning is preserved.
 	$(INSTALL) -m 755 -t $(TARGET_DIR)/etc/init.d \
 		$(SAZ1051_VENDOR_TREE)/scripts/S95majestic
 
 	# ---- majestic config ----
-	# audio is ON and validated end to end (see the audio block in
-	# vendor/saz1051/majestic.yaml): outputVolume must be 100, because the
-	# 0-100 -> dB mapping puts 30 at about -41 dB, which is inaudible.
+	# audio stays DISABLED (see the audio block in vendor/saz1051/majestic.yaml):
+	# with it enabled the vendor majestic's audio init dies on open_acodec,
+	# wedges the MPP and every later run has RTSP but no VENC channels.
+	# The audio kernel modules are not shipped anymore (video-only board).
 	$(INSTALL) -m 644 -t $(TARGET_DIR)/etc $(SAZ1051_VENDOR_TREE)/majestic.yaml
-
-	# ---- PTZ motor driver (MiXic MX2208A, misc device /dev/swmotor) ----
-	# Vendor ko, vermagic 5.10.221 (matches the running OpenIPC kernel ABI),
-	# GPIO defaults confirmed from the .ko .data section + live insmod
-	# (en=63 data=13 clk=12 rst=8). Loaded by S45saz_motor with those
-	# defaults. Userspace control: /usr/bin/swmotor_ctl (built from source)
-	# drives /dev/swmotor via ioctl; /var/www/cgi-bin/ptz.cgi is a WebUI panel.
-	# See vendor/saz1051/ptz/README.md for the cmd->direction mapping note.
-	$(INSTALL) -m 755 -d $(TARGET_DIR)/lib/modules/5.10.221
-	$(INSTALL) -m 644 -t $(TARGET_DIR)/lib/modules/5.10.221 \
-		$(SAZ1051_VENDOR_TREE)/motor/motor_mx2208a.ko
-	$(INSTALL) -m 755 -t $(TARGET_DIR)/etc/init.d \
-		$(SAZ1051_VENDOR_TREE)/scripts/S45saz_motor
-
-	# PTZ control tool (built from source in BUILD_CMDS) + WebUI CGI
-	$(INSTALL) -m 755 -t $(TARGET_DIR)/usr/bin $(@D)/swmotor_ctl
-	$(INSTALL) -m 755 -d $(TARGET_DIR)/var/www/cgi-bin
-	$(INSTALL) -m 755 -t $(TARGET_DIR)/var/www/cgi-bin \
-		$(SAZ1051_VENDOR_TREE)/ptz/ptz.cgi
 
 	# ---- proven-streaming majestic binary ----
 	# The prebuilt vendor majestic (in this tree) is the binary that has been
@@ -218,21 +197,9 @@ define SAZ1051_VENDOR_INSTALL_TARGET_CMDS
 
 endef
 
-# Both binaries are compiled for the target here (no prebuilt blobs), so the
-# acodec fix (audio_shim.c) and the PTZ tool always track the source.
-define SAZ1051_VENDOR_BUILD_CMDS
-	# libmajaudio.so: libc-free LD_PRELOAD shim (-nostdlib, only raw syscalls
-	# + dlopen/dlsym resolved from majestic's own libc at load time). Build in
-	# ARM mode (-marm) to match the proven prebuilt (its inline-asm svc0 +
-	# register-asm clobbers are most stable in ARM state).
-	$(TARGET_CC) -shared -fPIC -nostdlib -fno-stack-protector -fno-builtin \
-		-fno-unwind-tables -fno-asynchronous-unwind-tables -marm \
-		$(TARGET_CFLAGS) -o $(@D)/libmajaudio.so \
-		$(SAZ1051_VENDOR_TREE)/audio/audio_shim.c
-	# swmotor_ctl: normal libc program (links musl normally).
-	$(TARGET_CC) $(TARGET_CFLAGS) -o $(@D)/swmotor_ctl \
-		$(SAZ1051_VENDOR_TREE)/ptz/swmotor_ctl.c
-endef
+# No BUILD_CMDS: everything installed is a prebuilt blob or a plain script.
+# (The former libmajaudio.so / swmotor_ctl target builds went away with the
+# audio/PTZ removal — video-only board since 2026-09-30.)
 
 # Installed last so it overrides OpenIPC's from-source majestic binary and the
 # WebUI files (the `-v` probe patch must run after majestic-webui installs).

@@ -42,28 +42,20 @@ start() {
 	echo -n "Starting $DAEMON: "
 	(
 		trap '' HUP
-		# --- SAZ1051 audio fix (2026-09-23) -----------------------------
-		# The vendor majestic in this tree never calls the SDK's audio
-		# subsystem init: its .dynsym has NO ss_mpi_audio_* symbol, while
-		# Hi3516CV610 SDK V1.0.2.1 requires seven inits before any AI/AO/
-		# ADEC channel can be created (sample_comm_audio_init()):
-		#   ss_mpi_audio_init() + aenc/adec_{aac,mp3,opus}_init()
-		# Without them the daemon logs ERR_ADEC_NOT_CONFIG ("decoder may
-		# not be registered"), never binds ADEC to AO, and the speaker is
-		# dead: GET /audio.pcm -> "500 PCM is unavailable" and
-		# POST /play_audio -> heard as silence.
-		#
-		# /usr/lib/libmajaudio.so is a libc-free LD_PRELOAD shim whose
-		# constructor dlopen()s the two SDK audio libs and runs the seven
-		# missing inits. It gates on /proc/self/cmdline, so the helpers
-		# majestic spawns stay silent; it is exported only inside this
-		# subshell so the rest of the init sequence keeps a clean env.
-		# Source + rebuild recipe: vendor/saz1051/audio/BUILD.md
-		if [ -r /usr/lib/libmajaudio.so ]; then
-			LD_PRELOAD=/usr/lib/libmajaudio.so
-			export LD_PRELOAD
-		fi
-		# ---------------------------------------------------------------
+		# --- SAZ1051 env (2026-09-30) ------------------------------------
+		# Without these two, an S95-launched majestic brings up the web
+		# server but NEVER creates the VENC channels: RTSP answers 401/200
+		# to DESCRIBE/SETUP yet PLAY yields zero RTP bytes, and
+		# /proc/umap/venc shows no channels. A foreground run with the
+		# exported env streams normally (3.3 MB / 2866 RTP pkts in 6 s).
+		# SENSOR pins the sensor hint; MMZ_RESERVE_M must match the value
+		# burned into bootargs (48, no "M" suffix) so the SDK's userspace
+		# VB sizing agrees with the kernel MMZ geometry.
+		export SENSOR=os05l10
+		export MMZ_RESERVE_M=48
+		# No audio: video-only board (2026-09-30). The former
+		# LD_PRELOAD=/usr/lib/libmajaudio.so audio-init shim is gone;
+		# /etc/majestic.yaml keeps audio disabled.
 		start-stop-daemon -b -S -q -x "$DAEMON_PATH" -a "$DAEMON" -- $DAEMON_ARGS
 	)
 	case $? in

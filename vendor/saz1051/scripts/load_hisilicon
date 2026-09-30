@@ -66,24 +66,10 @@ insert_osal() {
 		modprobe open_mmz anony=1 mmz_allocator=cma mmz=$MMZ mem_process_isolation=$((1 - DEBUG)) || report_error
 	fi
 }
-function insert_audio()
-{
-	modprobe open_aio
-	modprobe open_ai
-	modprobe open_ao
-	modprobe open_aenc
-	modprobe open_adec
-	modprobe open_acodec
-}
-function remove_audio()
-{
-	rmmod open_acodec
-	rmmod open_adec
-	rmmod open_aenc
-	rmmod open_ao
-	rmmod open_ai
-	rmmod open_aio
-}
+# [SAZ1051 2026-09-30] insert_audio()/remove_audio() removed: video-only
+# board. The open_aio/ai/ao/aenc/adec/acodec/adc kernel modules are no
+# longer shipped, so no AIAO/codec device exists. Video pipeline is
+# unaffected (VI/VPSS/VENC do not depend on the audio modules).
 function insert_security_subsys()
 {
 	modprobe open_cipher 2>/dev/null
@@ -139,7 +125,6 @@ insert_ko() {
 	modprobe open_piris
 	modprobe open_sensor_i2c
 	modprobe open_sensor_spi 2>/dev/null
-	insert_audio
 	modprobe open_mipi_rx
 	case ${socmodel} in 20s|20g|00s|00g) modprobe open_aiisp ;; esac
 	modprobe open_pm
@@ -152,7 +137,6 @@ remove_ko() {
 	rmmod open_pm
 	rmmod open_aiisp &> /dev/null
 	rmmod open_mipi_rx
-	remove_audio
 	rmmod open_sensor_spi &> /dev/null
 	rmmod open_sensor_i2c &> /dev/null
 	rmmod open_piris 2>/dev/null

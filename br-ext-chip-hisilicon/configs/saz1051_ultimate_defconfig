@@ -166,7 +166,13 @@ BR2_PACKAGE_LIBCURL_OPENIPC_CURL=y
 # BR2_PACKAGE_LIBCURL_OPENIPC_PROXY_SUPPORT is not set
 # BR2_PACKAGE_LIBCURL_OPENIPC_COOKIES_SUPPORT is not set
 # BR2_PACKAGE_LIBCURL_OPENIPC_EXTRA_PROTOCOLS_FEATURES is not set
-BR2_PACKAGE_LAME_OPENIPC=y
+# LAME_OPENIPC removed (2026-09-30): this board is video-only (no mic/speaker).
+# NOTE: OPUS_OPENIPC + LIBOGG_OPENIPC must STAY even without audio features:
+# the prebuilt vendor majestic binary has hard DT_NEEDED entries on
+# libopus.so.0 and libogg.so.0 (parsed from its .dynamic section) — removing
+# those packages would stop the dynamic loader from starting majestic at all.
+# libmp3_lame.so in the same DT_NEEDED list is the MPP SDK's own lib (shipped
+# by hisilicon-osdrv), not the LAME package, so LAME itself is droppable.
 BR2_PACKAGE_OPUS_OPENIPC=y
 BR2_PACKAGE_OPUS_OPENIPC_FIXED_POINT=y
 BR2_PACKAGE_OPUS_OPENIPC_HISI_SHIM=y
