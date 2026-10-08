@@ -1,0 +1,69 @@
+SAZ1051 board GPIO definition -- provenance and evidence
+========================================================
+
+FILES
+  YHTX_HS_IPC_SAZ1051_gpio.json
+      本机型（SAZ1051）原厂板级定义，逐字节保真复制，未做任何修改。
+      size 261 B, LF only, md5 55525a408e71ba0807388c7a3c0dd3d2
+      装载路径：/etc/gpio/ 与 /system/etc/gpio/（与原厂一致）
+
+  YHTX_HS_IPC_SAC1051_gpio.json.reference
+      姊妹机型 SAC1051 的定义，仅作对照，**不装载**。
+      两机型 IrCut 极性相反（SAZ Enable=1/Disable=0，SAC 相反），
+      引脚号不可互搬。
+
+WHERE THE SAZ1051 FILE COMES FROM
+  backup/ 是 2026-09 从本机 SPI-NAND 逐分区读出的原厂固件（非海思 SDK 样例，
+  非第三方构建）。本文件出自
+      backup/mtd8.bin   -> 原厂 system_b 分区，UBI 卷名 "rootfs"
+                           卡内路径 system/etc/gpio/YHTX_HS_IPC_SAZ1051_gpio.json
+  共 5 份副本（mtd8 解包 / factory_sysetc / sysetc / origcfg / orig_pkgs），
+  md5 全部相同，内容一致。
+
+INDEPENDENT CONFIRMATION (a different evidence chain, same numbers)
+  backup/mtd12.bin 是原厂 data 分区，里面残留原厂 swapp 的启动日志。
+  注意直接 grep 原始 bin 搜不到，因为 UBI 卷内的 ubifs 是压缩的。
+  解出的原厂自打印行（字段顺序与原厂代码一致）：
+
+    ... YHTX_HS_IPC_SAZ1051 ... GPIO sw_gpio_init 596] read ... file success ...
+    ... sw_gpio_muxer ... parse ... ircut_open:-1, ircut_close:-1, led:9,
+        white:10, red:6, oth:7, speaker:60, rsetkey:61, spk_shdn_enable:0
+
+  逐项等于本 json：IrCutOpen/Close=-1, IRLed=9, WhiteLed=10, RedLed=6,
+  OthLed=7, Speaker=60, Rsetkey=61。
+  => json 是原厂运行时真正加载的那一份，不是拿错的通用样例。
+
+WHAT THE FACTORY ACTUALLY DROVE AT RUNTIME (measured, not inferred)
+  mtd12 里所有 sw_gpio_set 调用（共 592 处，其中 323 处日志未被覆盖、可读出）：
+
+    gpioN:M        times   printed by      meaning
+    ---------------------------------------------------------------------
+    gpio7 : 0/1    314    LedFlipProc     状态指示灯（OthLed=7），高频翻转
+    gpio6 : 0/1      5    LedFlipProc     红色指示灯（RedLed=6）
+    gpio60: 0        2    tAoCheck       喇叭/功放使能（Speaker=60）
+    gpio9 : 1        1    tIRCutProc     红外补光（IRLed=9），夜视时点亮
+    gpio0 : 0/1      2    LedFlipProc     gpio.json 未定义，用途未知
+    gpio5 : -        2    LedFlipProc     仅一份被 flash 覆盖的残片，存疑
+
+  从未被 set 过：gpio10 (WhiteLed) 与 gpio61 (Rsetkey) 在原厂日志里 0 次。
+  IrCut 定义即 -1，原厂 tIRCutProc 有完整日夜状态机（statu[day]<->statu[night]、
+  sw_irswitch "IR-->NORMAL"、ircut_day_load "statu [1 => 0]"）却从不驱动滤光片，
+  回调本身还报错（ircut_callback ... ircut_status=06h ... ERROR）。
+  => 本机型出厂就没有接 IR-cut 线圈；日夜切换只发生在 ISP/编码侧。
+
+LIMITS OF THIS EVIDENCE (do not over-read it)
+  mtd12 的日志区是环形缓冲、会被后续启动覆盖（592 次调用只还原出 323 处），
+  所以上面的清单是**下界**：能证明"这些被用过"，不能证明"没有别的"。
+  另：mtd10/11/13/14 等分区内 sw_gpio_set 与 LedFlipProc 计数均为 0，
+  原厂运行日志只存在于 mtd12。
+
+HOW TO REPRODUCE
+  python tools/mtd12_gpio_scan.py
+      脚本位于项目根的 tools/ 下（与本仓库同级，不属于本仓库），读
+      backup/mtd12.bin 与本目录的原厂 json，重跑上面全部统计。
+
+CONSEQUENCE FOR THIS FIRMWARE
+  能映射到 majestic 的只有两项（见 vendor/saz1051/majestic.yaml）：
+    nightMode.backlightPin = 9   <- FillLed.IRLed（夜视补光）
+    audio.speakerPin       = 60  <- Speaker（本机 /proc/asound/cards 为空，未启用音频）
+  指示灯 6/7、白光灯 10、复位键 61 在本版 majestic 中没有对应配置项。

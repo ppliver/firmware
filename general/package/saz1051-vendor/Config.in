@@ -1,0 +1,14 @@
+config BR2_PACKAGE_SAZ1051_VENDOR
+	bool "saz1051-vendor (SAZ1051 board firmware blobs)"
+	help
+	  SAZ1051 (Hi3516CV610 + OS05L10 + WS73) closed vendor firmware.
+
+	  Provides the bits OpenIPC's generic cv6xx package lacks for THIS
+	  board: the OS05L10 sensor library + ini, the WS73 USB WiFi driver
+	  and RF firmware, the board init (replaces stock /init), and the
+	  majestic config. MPP userspace .so and the load_hisilicon script
+	  come from the upstream hisilicon-osdrv-hi3516cv6xx package; the
+	  prebuilt MPP kernel modules (open_*.ko, built CONFIG_PM=n) are
+	  installed here into /lib/modules/5.10.221/hisilicon.
+
+	  Sourced from the repo's vendor/saz1051/ directory.

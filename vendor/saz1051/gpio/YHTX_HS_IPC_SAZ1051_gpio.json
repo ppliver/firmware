@@ -1,0 +1,19 @@
+{
+  "IrCut": {
+    "IrCutOpen": -1,
+    "IrCutClose": -1
+  },
+  "FillLed": {
+    "IRLed": 9,
+    "WhiteLed": 10
+  },
+  "TipsLed": {
+    "RedLed": 6,
+    "OthLed": 7
+  },
+  "Speaker": 60,
+  "Speaker_chn":"Right",
+  "Rsetkey": 61,
+  "Enable": 1,
+  "Disable": 0
+}

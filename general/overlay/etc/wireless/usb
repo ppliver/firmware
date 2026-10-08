@@ -206,6 +206,13 @@ if [ "$1" = "ssw101b-ssc333-tapo-c110" ]; then
 	exit 0
 fi
 
+# SSC333 Tapo C110 v2.6
+if [ "$1" = "atbm6012b-ssc333-tapo-c110" ]; then
+	set_gpio 16 1
+	modprobe atbm6012b_wifi_usb
+	exit 0
+fi
+
 # SSC335DE Uniview C1L-2WN-G
 if [ "$1" = "rtl8188fu-ssc335de-uniview-c1l-2wn-g" ]; then
 	set_gpio 1 0
@@ -307,6 +314,65 @@ fi
 if [ "$1" = "atbm603x-t31-zte-k540" ]; then
 	set_gpio 51 0
 	modprobe atbm603x_wifi_usb
+	exit 0
+fi
+
+# T31 Aoni E97VJ62
+if [ "$1" = "rtl8188fu-t31-aoni-e97vj62" ]; then
+	set_gpio 53 1
+	modprobe 8188fu
+  exit 0
+fi
+
+# SAZ1051 WS73 USB WiFi (vendor driver).
+#
+# SoC token = "hi3516cv610" (2026-09-30; supersedes the old "keep cv613"
+# decision). network.cgi adapter_scan() keeps a ws73-* entry only if its SoC
+# token prefix-matches $soc, and common.cgi:535 sets
+#   soc=$(ipcinfo --chip-name)
+# through /usr/bin — where ipctool's real binary reports the raw die ID
+# "hi3516cv613". The saz1051-vendor package therefore replaces /usr/bin/ipcinfo
+# with a shim that answers hi3516cv610 (real binary preserved as
+# ipcinfo.real, unknown queries fall through), so $soc=hi3516cv610 and this
+# cv610 token matches everywhere: WebUI "Wireless adapter" dropdown,
+# S40network's `usb $wlandev`, and the wlandev U-Boot env var. All four must
+# stay in lockstep on cv610 — do NOT rename only one of them.
+# (On devices flashed before 2026-09-30 the old cv613 entry + wlandev remain
+# until reflash; the shim is what makes the cv610 spelling safe.)
+#
+# Driver bring-up is an ordered insmod sequence into /opt/saz_wifi (the vendor
+# ko chain); the network layer (wpa_supplicant + dhcp) is handled SEPARATELY by
+# `ifup wlan0` (see /etc/network/interfaces.d/wlan0), which S40network runs
+# immediately after this script. We deliberately do NOT start wpa_supplicant /
+# udhcpc here and do NOT call /opt/tools/bringup_wifi.sh — doing so would double
+# up with ifup wlan0. (bringup_wifi.sh remains the full bring-up only for the
+# legacy custom PID1 path, oipc_init.sh, which does not run S40network.)
+#
+# The trailing `modprobe wifi_soc_v15` is a no-op marker: adapter_scan() parses
+# `modprobe` lines to learn the driver module name, so it must stay (the explicit
+# insmods above do the real ordered load; the modprobe is just for WebUI discovery).
+# wifi_soc_v15.ko (and the rest of the chain) is exposed under /lib/modules/5.10.221
+# as a symlink to /opt/saz_wifi (see saz1051-vendor.mk) so adapter_scan's
+# `find /lib/modules -name '*.ko'` existence check passes.
+if [ "$1" = "ws73-hi3516cv610-saz1051" ]; then
+	K=/opt/saz_wifi
+	mkdir -p /system/etc /var/run/wpa_supplicant
+	[ -f /system/etc/ws73_cfg.ini ] || cp /etc/ws73_cfg.ini /system/etc/ws73_cfg.ini 2>/dev/null
+	insmod $K/rfkill.ko          2>/dev/null
+	insmod $K/libarc4.ko         2>/dev/null
+	insmod $K/firmware_class.ko  2>/dev/null
+	insmod $K/cfg80211_v20.ko    2>/dev/null
+	insmod $K/mac80211.ko        2>/dev/null
+	sleep 2
+	insmod $K/muxfix.ko mode=1 skip_usb=1 2>/dev/null
+	sleep 2
+	insmod $K/plat_soc.ko        2>/dev/null
+	if [ -f $K/wifi_soc_v15.ko ]; then
+		insmod $K/wifi_soc_v15.ko 2>/dev/null
+	else
+		insmod $K/wifi_soc.ko     2>/dev/null
+	fi
+	modprobe wifi_soc_v15 >/dev/null 2>&1 || true
 	exit 0
 fi
 

@@ -1,31 +1,70 @@
 #!/bin/sh
 
+# rcS exports TZ once at boot, so a later edit to /etc/TZ is shadowed by the
+# stale value inherited through majestic's own children (web UI, sysupgrade).
+# Re-read it here so a restart picks up the new zone without a reboot.
+# musl never reads /etc/TZ itself; it uses $TZ, else /etc/localtime.
+[ -r /etc/TZ ] && export TZ=$(cat /etc/TZ)
+
 DAEMON="majestic"
-PIDFILE="/var/run/$DAEMON.pid"
+DAEMON_PATH="/usr/bin/$DAEMON"
 DAEMON_ARGS="-s"
 
-start() {
-	ulimit -c unlimited
-	echo "/tmp/core.majestic" > /proc/sys/kernel/core_pattern
+# Find the daemon by executable, never through a pidfile. Given -p, busybox
+# start-stop-daemon inspects only the pid that file holds and never scans
+# /proc, so the moment that pid is stale it can no longer see the live daemon:
+# -S starts a SECOND majestic, which dies on the busy sensor HAL and leaves its
+# own dead pid behind in the file, and -K without -x signals whatever unrelated
+# process has since reused the pid. -x scans every process instead, and -a
+# keeps argv[0] as "majestic" so ps output and name-based tools are unchanged.
+running() {
+	start-stop-daemon -t -K -q -x "$DAEMON_PATH"
+}
 
+# Started with SIGHUP ignored, because the disposition survives exec() and a
+# handler does not. majestic's reload signal is SIGHUP, and until it reaches
+# init_libevent() the default action applies -- which is to terminate. That gap
+# is reachable: -b returns at the fork, so boot carries straight on into the S98
+# scripts, and wifibroadcast writes fourteen keys and then signals. Anyone
+# following the wiki's `killall -HUP majestic` by hand can land in it too.
+#
+# It has to be done here rather than inside majestic. The gap that gets hit is
+# not between main() and init_libevent() -- that is sub-millisecond -- it is
+# before main() runs at all, while the dynamic loader maps the vendor
+# libraries: `killall` already matches the name exec() set, and not one
+# instruction of the program has run. No code in the daemon can cover that, but
+# an ignore inherited across exec() covers all of it, and libevent replaces the
+# disposition when it installs the real handler.
+#
+# Measured on a hi3516ev200, 25 `killall -1` fired into the start window:
+# without this the daemon is dead every run; with it, it survives every run.
+start() {
 	echo -n "Starting $DAEMON: "
-	start-stop-daemon -b -m -S -q -p "$PIDFILE" -x "$DAEMON" -- $DAEMON_ARGS
-	if [ $? -eq 0 ]; then
-		echo "OK"
-	else
-		echo "FAIL"
-	fi
+	(
+		trap '' HUP
+		start-stop-daemon -b -S -q -x "$DAEMON_PATH" -a "$DAEMON" -- $DAEMON_ARGS
+	)
+	case $? in
+		0) echo "OK"; return 0 ;;
+		1) echo "OK (already running)"; return 0 ;;
+		*) echo "FAIL"; return 1 ;;
+	esac
 }
 
 stop() {
 	echo -n "Stopping $DAEMON: "
-	start-stop-daemon -K -q -p "$PIDFILE"
-	if [ $? -eq 0 ]; then
-		rm -f "$PIDFILE"
-		echo "OK"
-	else
+	start-stop-daemon -K -q -x "$DAEMON_PATH"
+	i=0
+	while running && [ $i -lt 10 ]; do
+		i=$((i + 1))
+		sleep 1
+	done
+	if running; then
 		echo "FAIL"
+		return 1
 	fi
+	rm -f "/var/run/$DAEMON.pid"
+	echo "OK"
 }
 
 case "$1" in
@@ -33,10 +72,14 @@ case "$1" in
 		$1
 		;;
 
-	restart|reload)
-		stop
+	restart)
+		stop || exit 1
 		sleep 3
 		start
+		;;
+
+	reload)
+		start-stop-daemon -K -s 1 -q -x "$DAEMON_PATH"
 		;;
 
 	*)

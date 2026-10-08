@@ -8,11 +8,39 @@ on_exit() {
 trap on_exit EXIT
 
 mount -t proc proc /proc || exit 1
+# The ubifs mount below resolves the "ubi0:rootfs_data" volume name through
+# /sys/class/ubi, so /sys must be up, and the UBI character device must exist
+# (with mdev /dev is not auto-populated either). Without this the mount failed,
+# the camera fell back to a read-only squashfs root: firstrun/WebUI could not
+# write /etc/shadow ("The password could not be saved"), dropbear could not
+# write its host key (SSH handshake EOF) and the camera stayed unclaimed.
+mount -t sysfs sysfs /sys 2>/dev/null
+for _i in $(seq 1 50); do
+	[ -e /dev/ubi0 ] && break
+	mdev -s 2>/dev/null
+	sleep 0.1
+done
 grep -q overlay /proc/filesystems || exit 1
 
-if ! grep -q 'root=.*nfs\|mmcblk\|ram' /proc/cmdline; then
-	if grep -q ubifs /proc/cmdline; then
-		mount -t ubifs ubi0:rootfs_data /overlay
+is_flash_root=true
+is_nfs_root=false
+# Anchor these to the root= value. A bare "ram"/"mmcblk"/"nfs" matched the whole
+# command line, so any unrelated token carrying those letters -- e.g. the
+# "ramoops" crash-log parameters -- was mistaken for a ramdisk/SD/NFS root, the
+# flash overlay was never mounted, and the camera booted read-only and unclaimed.
+grep -qE 'root=[^ ]*(nfs|mmcblk|ram)' /proc/cmdline && is_flash_root=false
+grep -qE 'root=[^ ]*nfs' /proc/cmdline && is_nfs_root=true
+
+if $is_flash_root; then
+	# SquashFS-on-UBI (hisilicon NAND) carries none of the old markers on the
+	# command line: root=/dev/ubiblock0_0 rootfstype=squashfs ubi.block=0,0
+	# ubi.mtd=N. Match any of them; a legacy UBIFS-root cmdline still has
+	# rootfstype=ubifs. The volume name matches ubinize_hisilicon.cfg.
+	if grep -qE 'rootfstype=ubifs|ubi\.block=|ubi\.mtd=' /proc/cmdline; then
+		for _i in $(seq 1 10); do
+			mount -t ubifs ubi0:rootfs_data /overlay && break
+			sleep 0.2
+		done
 	else
 		mtdblkdev=$(awk -F ':' '/rootfs_data/ {print $1}' /proc/mtd | sed 's/mtd/mtdblock/')
 		mtdchrdev=$(grep 'rootfs_data' /proc/mtd | cut -d: -f1)
@@ -27,7 +55,16 @@ if ! grep -q 'root=.*nfs\|mmcblk\|ram' /proc/cmdline; then
 			fi
 		fi
 	fi
+elif $is_nfs_root && grep -q ' ro ' /proc/cmdline; then
+	TMPFS_SIZE='@TMPFS_SIZE@'
+	TMPFS_SIZE="${TMPFS_SIZE:-16M}"
+	if ! mount -t tmpfs -o mode=0755,size=${TMPFS_SIZE} tmpfs /overlay; then
+		echo "Cannot mount tmpfs overlay."
+		exit 1
+	fi
+fi
 
+if $is_flash_root || $is_nfs_root; then
 	if grep -q overlayfs /proc/filesystems; then
 		if ! mount -t overlayfs overlayfs -o lowerdir=/,upperdir=/overlay,ro /mnt; then
 			umount /overlay
