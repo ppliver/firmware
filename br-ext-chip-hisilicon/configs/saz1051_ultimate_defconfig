@@ -156,7 +156,27 @@ BR2_PACKAGE_HISILICON_OSDRV_HI3516CV6XX=y
 BR2_PACKAGE_IPCTOOL=y
 BR2_PACKAGE_LIBEVENT_OPENIPC=y
 BR2_PACKAGE_LIBOGG_OPENIPC=y
-BR2_PACKAGE_LIBWEBSOCKETS_OPENIPC=y
+# libwebsockets-openipc is DROPPED on purpose (CI run 37785705207).
+# Its 4.2.2 source carries an mbedTLS "wrapper" (lib/tls/mbedtls/wrapper/) that
+# is written against the mbedTLS 2.x API, but the mbedTLS headers visible in its
+# per-package sysroot are 3.x, so the build dies with:
+#   'MBEDTLS_SSL_MINOR_VERSION_1/2' undeclared
+#   'mbedtls_ssl_context' has no member named 'state'
+#   'mbedtls_ecp_keypair' has no member named 'Q'
+#   'mbedtls_rsa_context' has no member named 'N'/'E'
+#   'mbedtls_x509_crt' has no member named 'key_usage'
+#   too few arguments to function 'mbedtls_pk_parse_key'  (2.25.0 takes 5, 3.x 7)
+# Verified against the real mbedtls-openipc 2.25.0 tarball: 2.25.0 DOES define
+# MBEDTLS_SSL_MINOR_VERSION_1/2 and does carry state/Q/N/E/key_usage, so the
+# headers lws compiles against are definitively not 2.25.0 -- a per-package
+# sysroot version skew, not a source bug.
+# Nothing on this board needs lws: the only reverse dependency in the whole
+# tree is aws-producer (BR2_PACKAGE_AWS_PRODUCER, not enabled here), majestic
+# does not link it, and onvif/wsdd are not part of this config. Dropping it
+# removes the only failing package for the basic netcam role
+# (RTSP + WebUI + WiFi). Re-enable only together with a TLS backend that
+# actually matches (i.e. after fixing the mbedTLS sysroot skew).
+# BR2_PACKAGE_LIBWEBSOCKETS_OPENIPC is not set
 # libcurl-openipc parent: must be selected explicitly here — the CURL sub-option
 # below is gated under it, and nothing else in this board's package set selects it
 # (quirc/uacme/wifibroadcast do in the upstream cv6xx build, but they are dropped
