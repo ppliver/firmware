@@ -31,9 +31,12 @@ jobs:
       - name: Checkout source
         uses: actions/checkout@v4
         with:
-          # schedule -> always the saz1051-sync branch; manual -> given commit,
-          # else the ref the dispatch happened on.
-          ref: ${{ inputs.commit || (github.event_name == 'schedule' && 'saz1051-sync') || github.sha }}
+          # Always build the SAZ1051 board tree. An explicit commit input
+          # overrides; otherwise pin to saz1051-sync (the board defconfig and
+          # vendor package only exist there, NOT on master). The earlier
+          # `|| github.sha` fallback checked out master and either built the
+          # wrong tree or failed `make BOARD=saz1051_ultimate`.
+          ref: ${{ inputs.commit || 'saz1051-sync' }}
           fetch-depth: 0
 
       - name: Prepare
