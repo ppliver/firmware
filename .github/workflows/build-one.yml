@@ -128,7 +128,11 @@ jobs:
           backoffs="30 60 120 300 600 1200"
           attempt=1
           for sleep_for in $backoffs ""; do
-            make BOARD=${{inputs.platform}} && break
+            # Wrap make in timeout: a wedged GitHub runner agent would otherwise
+            # leave `make` waiting forever (until the 6h job limit). 7200s (2h)
+            # is above a cold full-rebuild ceiling for this board but caps a hang.
+            # `-k 60` sends SIGKILL 60s after the SIGTERM if children linger.
+            timeout -k 60 7200 make BOARD=${{inputs.platform}} && break
             if [ -z "$sleep_for" ]; then
               echo "::error::build failed after ${attempt} attempts"
               exit 1
