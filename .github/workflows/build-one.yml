@@ -12,7 +12,7 @@ on:
 jobs:
   resolve:
     name: Resolve commit
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     outputs:
       ref:       ${{ steps.r.outputs.ref }}
       short_sha: ${{ steps.r.outputs.short_sha }}
@@ -36,7 +36,12 @@ jobs:
   buildroot:
     name: Firmware (${{inputs.platform}})
     needs: resolve
-    runs-on: ubuntu-latest
+    # Pin the image instead of tracking ubuntu-latest. On this board's cold
+    # builds the runner AGENT process intermittently wedges (logs freeze
+    # mid-package with no error, while disk has 86GB free -> not disk, not the
+    # package). Pinning to the 22.04 LTS pool removes the moving target; the
+    # real cold builds still recover via the watchdog (retry on a new runner).
+    runs-on: ubuntu-22.04
 
     steps:
       - name: Checkout source
