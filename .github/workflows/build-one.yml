@@ -58,6 +58,15 @@ jobs:
         with:
           path: /tmp/ccache
           key: ${{inputs.platform}}-${{env.CACHE_DATE}}
+          # Fall back to the most recent cache for this board. The per-month key
+          # goes cold on the 1st of every month, and WITHOUT a restore-key a
+          # cold build recompiles the whole tree from scratch: ~6x longer and a
+          # disk/IO storm that is what wedges the GitHub runner agent (build
+          # logs freeze mid-package, no error). ccache validates by content
+          # hash, so a restored older cache still hits for every UNCHANGED
+          # package and only recompiles what actually moved -- this is the
+          # difference between a ~10min build and a ~60min one.
+          restore-keys: ${{inputs.platform}}-
 
       # Restore-only, deliberately. `dl-<month>` is one key shared with the
       # whole build.yml matrix, and actions/cache saves only on a key miss, so
