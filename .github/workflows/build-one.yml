@@ -125,6 +125,17 @@ jobs:
           mkdir -p /tmp/ccache
           ln -s /tmp/ccache ${HOME}/.ccache
 
+          # SAZ1051 CI hardening (2026-10-08): a cold full rebuild on the GitHub
+          # hosted runner's ~14GB root fs, plus an *unbounded* ccache and a
+          # per-package output tree, has repeatedly wedged the runner agent —
+          # build logs freeze mid-package with no error (runs 37721754479 /
+          # 37725784251 / 37728045308). The most likely trigger is the root fs
+          # filling up under the write storm, which stalls the agent process.
+          # Cap ccache so it can never be the thing that fills the disk, and log
+          # disk headroom up front so a future hang is diagnosable at a glance.
+          ccache -M 1G || true
+          echo "disk before build:"; df -h / /tmp || true
+
           backoffs="30 60 120 300 600 1200"
           attempt=1
           for sleep_for in $backoffs ""; do
@@ -138,6 +149,7 @@ jobs:
               exit 1
             fi
             echo "::warning::attempt ${attempt} failed, retrying after ${sleep_for}s"
+            df -h / /tmp || true
             sleep "$sleep_for"
             attempt=$((attempt + 1))
           done

@@ -192,3 +192,19 @@ BR2_PACKAGE_MAJESTIC_FONTS=y
 BR2_PACKAGE_MAJESTIC_WEBUI=y
 BR2_PACKAGE_YAML_CLI=y
 BR2_PACKAGE_SAZ1051_VENDOR=y
+
+# --- CI disk/IO hardening (2026-10-08) ---
+# ccache: use a relative base dir so the /tmp/ccache restored by the
+# build-one.yml cache action is reused across runs/workspaces (higher hit
+# rate -> less rebuild IO). The build-one.yml `ccache -M 1G` cap is what
+# actually bounds disk usage on the ~14GB hosted runner; this just makes the
+# cache portable. Harmless on this board.
+BR2_CCACHE=y
+BR2_CCACHE_USE_BASEDIR=y
+# NOTE: BR2_PER_PACKAGE_DIRECTORIES is forced =y by general/openipc.fragment
+# (loaded after this defconfig) and MUST stay on for SAZ1051: hisilicon-
+# opensdk.mk copies its kernel modules via `$(if $(BR2_PER_PACKAGE_DIRECTORIES)
+# , rsync ... $(PER_PACKAGE_DIR)/hisilicon-opensdk/target/lib/modules/ ...)`.
+# Turning it off would drop the osdrv .ko from the image (no MPP -> no video).
+# Do NOT add `BR2_PER_PACKAGE_DIRECTORIES is not set` here — the fragment wins
+# anyway and the modules would silently vanish.
