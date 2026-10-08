@@ -133,6 +133,23 @@ define SAZ1051_VENDOR_INSTALL_TARGET_CMDS
 	# not satisfy it. This is the board build new5 ran (7527 B, a68881c8).
 	$(INSTALL) -m 755 -t $(TARGET_DIR)/opt/oipc $(SAZ1051_VENDOR_TREE)/scripts/load_hisilicon
 
+	# SAZ1051 MPP loader alias (2026-10-08 root-cause fix).
+	# The board runs the OFFICIAL PID1 (busybox init -> inittab -> rcS ->
+	# /etc/init.d/S70vendor), NOT oipc_init.sh. S70vendor does
+	#   vendor=$(ipcinfo -v); load_"$vendor" -i
+	# and the SAZ1051 ipcinfo shim reports `-v` as `3516cv610_20s`, so the
+	# resolved command is `load_3516cv610_20s`. No such script ships, so MPP
+	# (open_*.ko) never loads and the camera has NO video. The rename commit
+	# d61cac09 introduced the `3516cv610_20s` token but never created a loader
+	# by that name -- this is the regression that broke streaming.
+	# Provide a board-scoped alias (in /usr/bin, on rcS's PATH) that resolves
+	# S70vendor's command to the real, board-tuned loader. Pointed at the
+	# /opt/oipc copy (audio-stripped, sc4336p kernel sensor) that oipc_init.sh
+	# also uses -- NOT the osdrv /usr/bin/load_hisilicon -- to stay faithful to
+	# the proven new5 bring-up. Board-scoped: lives in this package, not the
+	# shared generic overlay, so other boards are unaffected.
+	ln -sf /opt/oipc/load_hisilicon $(TARGET_DIR)/usr/bin/load_3516cv610_20s
+
 	# /opt/oipc/sbin sits first on oipc_init.sh's PATH and deliberately shadows
 	# the real tools:
 	#   modprobe   -- busybox `modprobe <name>` cannot resolve hisilicon/open_*.ko
