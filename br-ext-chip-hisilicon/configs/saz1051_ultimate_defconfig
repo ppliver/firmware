@@ -174,7 +174,16 @@ BR2_PACKAGE_LIBCURL_OPENIPC_CURL=y
 # libcurl with --without-mbedtls and keep it fully out of the mbedTLS tree.
 # (If HTTPS ever becomes required, switch libcurl to the OpenSSL backend
 # instead of mbedTLS — do not re-enable this.)
-# BR2_PACKAGE_LIBCURL_OPENIPC_MBEDTLS is not set
+# NOTE: the previous line here was `# BR2_PACKAGE_LIBCURL_OPENIPC_MBEDTLS is
+# not set`, which does NOT work. The SSL/TLS selector is a NON-optional
+# `choice` (Config.in:48), and because BR2_PACKAGE_MBEDTLS_OPENIPC=y (selected
+# above for WiFi), the choice forcibly auto-selects MBEDTLS regardless of the
+# defconfig `is not set` — so libcurl was built with --with-mbedtls and pulled
+# the mismatched mbedTLS headers into its per-package sysroot (CI run
+# 37764936799 failed on the resulting check_config.h #error). The only way to
+# keep libcurl fully out of the mbedTLS tree is to explicitly pick the "None"
+# choice option below.
+BR2_PACKAGE_LIBCURL_OPENIPC_TLS_NONE=y
 # BR2_PACKAGE_LIBCURL_OPENIPC_PROXY_SUPPORT is not set
 # BR2_PACKAGE_LIBCURL_OPENIPC_COOKIES_SUPPORT is not set
 # BR2_PACKAGE_LIBCURL_OPENIPC_EXTRA_PROTOCOLS_FEATURES is not set
