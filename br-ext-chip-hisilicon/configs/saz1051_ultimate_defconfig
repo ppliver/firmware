@@ -163,6 +163,15 @@ BR2_PACKAGE_LIBWEBSOCKETS_OPENIPC=y
 # here). Without the parent, /usr/bin/curl is never built.
 BR2_PACKAGE_LIBCURL_OPENIPC=y
 BR2_PACKAGE_LIBCURL_OPENIPC_CURL=y
+# Explicitly select the mbedTLS TLS backend for libcurl. Without this, libcurl's
+# configure auto-detects the mbedTLS staged for wpa_supplicant (MBEDTLS_OPENIPC=y)
+# but does NOT declare a build dependency, so the two packages race: libcurl can
+# compile against a half-installed/transitional mbedTLS config and trip
+# mbedtls/check_config.h "MBEDTLS_ENTROPY_C defined, but not all prerequisites"
+# (CI run 37718158707). Selecting it here (as hi3516cv6xx_lite_defconfig does)
+# forces the dependency + deterministic ordering. SAZ1051-scoped; no effect on
+# other boards.
+BR2_PACKAGE_LIBCURL_OPENIPC_MBEDTLS=y
 # BR2_PACKAGE_LIBCURL_OPENIPC_PROXY_SUPPORT is not set
 # BR2_PACKAGE_LIBCURL_OPENIPC_COOKIES_SUPPORT is not set
 # BR2_PACKAGE_LIBCURL_OPENIPC_EXTRA_PROTOCOLS_FEATURES is not set
