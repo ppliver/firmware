@@ -163,15 +163,18 @@ BR2_PACKAGE_LIBWEBSOCKETS_OPENIPC=y
 # here). Without the parent, /usr/bin/curl is never built.
 BR2_PACKAGE_LIBCURL_OPENIPC=y
 BR2_PACKAGE_LIBCURL_OPENIPC_CURL=y
-# Explicitly select the mbedTLS TLS backend for libcurl. Without this, libcurl's
-# configure auto-detects the mbedTLS staged for wpa_supplicant (MBEDTLS_OPENIPC=y)
-# but does NOT declare a build dependency, so the two packages race: libcurl can
-# compile against a half-installed/transitional mbedTLS config and trip
-# mbedtls/check_config.h "MBEDTLS_ENTROPY_C defined, but not all prerequisites"
-# (CI run 37718158707). Selecting it here (as hi3516cv6xx_lite_defconfig does)
-# forces the dependency + deterministic ordering. SAZ1051-scoped; no effect on
-# other boards.
-BR2_PACKAGE_LIBCURL_OPENIPC_MBEDTLS=y
+# Do NOT enable the mbedTLS TLS backend for libcurl. libcurl's --with-mbedtls
+# makes curl_setup.h include mbedtls/md4.h -> config.h -> check_config.h from
+# libcurl's per-package sysroot. That sysroot is rsync'd from the shared
+# staging and, under Buildroot per-package mode, can pick up a transitional /
+# mismatched mbedTLS config (the same libcurl<->mbedTLS race warned about
+# below, CI runs 37718158707 / 37760222668). The failure mode is a hard
+# #error in mbedtls/check_config.h, not a warning. HTTPS in libcurl is NOT
+# needed for this board's basic netcam role (RTSP + WebUI + WiFi), so build
+# libcurl with --without-mbedtls and keep it fully out of the mbedTLS tree.
+# (If HTTPS ever becomes required, switch libcurl to the OpenSSL backend
+# instead of mbedTLS — do not re-enable this.)
+# BR2_PACKAGE_LIBCURL_OPENIPC_MBEDTLS is not set
 # BR2_PACKAGE_LIBCURL_OPENIPC_PROXY_SUPPORT is not set
 # BR2_PACKAGE_LIBCURL_OPENIPC_COOKIES_SUPPORT is not set
 # BR2_PACKAGE_LIBCURL_OPENIPC_EXTRA_PROTOCOLS_FEATURES is not set
