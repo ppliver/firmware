@@ -18,10 +18,6 @@ MBEDTLS_OPENIPC_VERSION = 3.6.4
 # the framework submodule are only in the release.
 MBEDTLS_OPENIPC_SOURCE = mbedtls-$(MBEDTLS_OPENIPC_VERSION).tar.bz2
 MBEDTLS_OPENIPC_SITE = https://github.com/Mbed-TLS/mbedtls/releases/download/mbedtls-$(MBEDTLS_OPENIPC_VERSION)
-# This board's package is named `mbedtls-openipc` (OpenIPC upstream names it
-# `mbedtls`), so the extracted top dir `mbedtls-$(VERSION)` must be declared as
-# a subdir or @D resolves to a path that does not exist.
-MBEDTLS_OPENIPC_SUBDIR = mbedtls-$(MBEDTLS_OPENIPC_VERSION)
 MBEDTLS_OPENIPC_CONF_OPTS = \
 	-DENABLE_PROGRAMS=$(if $(BR2_PACKAGE_MBEDTLS_OPENIPC_PROGRAMS),ON,OFF) \
 	-DENABLE_TESTING=OFF -DBUILD_SHARED_LIBS=OFF
