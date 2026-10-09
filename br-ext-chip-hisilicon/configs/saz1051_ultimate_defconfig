@@ -108,15 +108,19 @@ BR2_PACKAGE_WPA_SUPPLICANT_CLI=y
 # associates. Stock buildroot wpa_supplicant option (we build the upstream
 # package, not the -openipc fork).
 BR2_PACKAGE_WPA_SUPPLICANT_PASSPHRASE=y
-# mbedtls-openipc is NOT optional here: libwebsockets-openipc's .mk does
-# `if BR2_PACKAGE_MBEDTLS_OPENIPC ... -DLWS_WITH_MBEDTLS=ON else ...=OFF`, and
-# with mbedTLS off its CMake falls back to auto-detecting OpenSSL -> configure
-# dies with "Could NOT find OpenSSL (missing: OPENSSL_CRYPTO_LIBRARY
-# OPENSSL_INCLUDE_DIR)". Upstream's cv6xx defconfig gets mbedTLS in transitively
-# via uacme-openipc; we dropped that package, so select it explicitly. This is
-# also the house convention: every upstream WiFi defconfig pairs
-# WPA_SUPPLICANT with MBEDTLS_OPENIPC.
+# mbedtls-openipc: pinned to 3.6.4 (2026-10-09) to match the OpenIPC external
+# toolchain's bundled mbedTLS and the prebuilt majestic master binary. The
+# package's DROP_TOOLCHAIN_COPY hook removes the toolchain's own copy from
+# staging so libevent (a majestic dependency) links OUR 3.6.4 and not the
+# toolchain's -- without it majestic fails to load at boot
+# ("libmbedtls.so.21: No such file"). libwebsockets-openipc is gone, so 3.x is
+# safe. House convention: every upstream WiFi defconfig pairs WPA_SUPPLICANT
+# with MBEDTLS_OPENIPC.
 BR2_PACKAGE_MBEDTLS_OPENIPC=y
+# zlib: the prebuilt majestic binary needs libz.so.1 at run time (deflate /
+# compress2 for HTTP/MJPEG). Not pulled in by any dependency here, so select it
+# explicitly or WEB/RTSP never come up after flash.
+BR2_PACKAGE_ZLIB=y
 
 # RootFS — official hisilicon NAND recipe (SquashFS-on-UBI), mirrors
 # hi3516ev200_ultimate_defconfig: a read-only squashfs rootfs in UBI volume
